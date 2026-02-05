@@ -1,0 +1,10 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Railway cron: Saturday 08:30 Brussels time (UTC+1/+2)
+# 30 6 * * 6 = 06:30 UTC = 08:30 CET (winter) / 07:30 CEST (summer)
+# Adjust to 30 6 * * 6 for CET, Railway uses UTC
+cronSchedule = "30 6 * * 6"
+restartPolicyType = "NEVER"

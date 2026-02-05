@@ -1,0 +1,51 @@
+# Dockerfile with cron scheduler for automated Saturday runs
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install supercronic for cron scheduling
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install supercronic (cron for containers)
+ENV SUPERCRONIC_URL=https://github.com/aptible/supercronic/releases/download/v0.2.29/supercronic-linux-amd64 \
+    SUPERCRONIC_SHA1SUM=cd48d45c4b10f3f0bfdd3a57d054cd05ac96812b \
+    SUPERCRONIC=supercronic-linux-amd64
+
+RUN curl -fsSLO "$SUPERCRONIC_URL" \
+    && echo "${SUPERCRONIC_SHA1SUM}  ${SUPERCRONIC}" | sha1sum -c - \
+    && chmod +x "$SUPERCRONIC" \
+    && mv "$SUPERCRONIC" "/usr/local/bin/${SUPERCRONIC}" \
+    && ln -s "/usr/local/bin/${SUPERCRONIC}" /usr/local/bin/supercronic
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash appuser
+
+# Create directories
+RUN mkdir -p /app/data /app/logs /app/config && \
+    chown -R appuser:appuser /app
+
+# Copy application code
+COPY --chown=appuser:appuser src/ /app/src/
+COPY --chown=appuser:appuser config/ /app/config/
+COPY --chown=appuser:appuser scripts/ /app/scripts/
+
+# Entrypoint script generates crontab from config at startup
+COPY --chown=appuser:appuser scripts/docker_entrypoint.sh /app/docker_entrypoint.sh
+RUN chmod +x /app/docker_entrypoint.sh
+
+# Switch to non-root user
+USER appuser
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV CONFIG_PATH=/app/config/config.yaml
+
+# Entrypoint generates crontab from config, then runs supercronic
+CMD ["/app/docker_entrypoint.sh"]

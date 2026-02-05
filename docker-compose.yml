@@ -1,0 +1,103 @@
+# Docker Compose configuration for Job Refresh Bot
+# Usage:
+#   docker-compose up job-refresh          # Run once (dry-run)
+#   docker-compose up job-refresh-live     # Run once (production)
+#   docker-compose up scheduler            # Run with cron scheduler
+
+version: '3.8'
+
+x-common-env: &common-env
+  BRIGHT_API_ACCESS_TOKEN: ${BRIGHT_API_ACCESS_TOKEN:-}
+  BRIGHT_API_BASE_URL: ${BRIGHT_API_BASE_URL:-https://match.b-bright.be/api}
+  BRIGHT_API_VERSION: ${BRIGHT_API_VERSION:-1.0}
+  BRIGHT_OFFICE_ID: ${BRIGHT_OFFICE_ID:-1,5}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+x-common-volumes: &common-volumes
+  - ./data:/app/data
+  - ./logs:/app/logs
+  - ./config:/app/config:ro
+
+services:
+  # One-time run (dry-run mode for testing)
+  job-refresh:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job-refresh-bot
+    environment:
+      <<: *common-env
+      DRY_RUN: "true"
+    volumes: *common-volumes
+    command: ["run", "--dry-run"]
+
+  # One-time run (production mode - same as Railway)
+  job-refresh-live:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job-refresh-bot-live
+    environment:
+      <<: *common-env
+      DRY_RUN: "false"
+    volumes: *common-volumes
+    command: ["run"]
+
+  # Scheduled runs using supercronic (Saturday 08:30 Brussels)
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.scheduler
+    container_name: job-refresh-scheduler
+    environment:
+      <<: *common-env
+      DRY_RUN: "false"
+      TZ: Europe/Brussels
+    volumes: *common-volumes
+    restart: unless-stopped
+
+  # Status check
+  status:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job-refresh-status
+    volumes:
+      - ./data:/app/data:ro
+      - ./logs:/app/logs:ro
+    command: ["status"]
+
+  # History viewer
+  history:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job-refresh-history
+    volumes:
+      - ./data:/app/data:ro
+      - ./logs:/app/logs:ro
+    command: ["history"]
+
+  # Test API connection
+  test-connection:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job-refresh-test
+    environment:
+      <<: *common-env
+    command: ["test-connection"]
+
+  # Validate configuration
+  validate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job-refresh-validate
+    environment:
+      <<: *common-env
+    volumes:
+      - ./config:/app/config:ro
+    command: ["validate"]

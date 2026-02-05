@@ -1,0 +1,59 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Logs and data (mounted as volumes)
+logs/
+data/
+*.log
+*.db
+
+# Documentation
+*.md
+!README.md
+
+# Tests (not needed in production)
+tests/
+
+# Scripts (not needed in container)
+scripts/
+
+# Local config (use volumes instead)
+.env
+.env.local
+.env.example
+
+# Railway config (used by Railway, not inside container)
+railway.toml
+
+# Docker files
+docker-compose.yml
+Dockerfile.scheduler

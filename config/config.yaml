@@ -1,0 +1,57 @@
+# Bright Staffing Job Refresh Bot Configuration
+
+api:
+  base_url: "https://match.b-bright.be/api"
+  # access_token loaded from environment variable BRIGHT_API_ACCESS_TOKEN
+  # office_id loaded from environment variable BRIGHT_OFFICE_ID
+  api_version: "1.0"
+  api_lang: "en"
+  rate_limit: 1.0  # requests per second
+  max_retries: 3
+  timeout: 30
+  backoff_base: 2.0
+  backoff_multiplier: 2.0
+  max_backoff: 60.0
+
+processor:
+  batch_size: 50
+  close_reason: 3  # closereason_id: 3 = "Dubbele vacature"
+  multipost_channels:
+    - 1  # Website
+    - 2  # Vdab
+  dry_run: false
+  # Stop processing if this many consecutive failures occur
+  circuit_breaker_threshold: 10
+  # Continue processing remaining jobs if one fails
+  continue_on_error: true
+
+schedule:
+  timezone: "Europe/Brussels"
+  day_of_week: 5  # Saturday (0=Monday, 6=Sunday)
+  hour: 8
+  minute: 30
+
+alerts:
+  enabled: true
+  email:
+    recipients: []
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+    smtp_user: ""
+    smtp_password: ""
+    from_address: "jobrefresh@example.com"
+  webhook:
+    url: null
+    # Alert thresholds
+  failure_threshold: 10  # Alert if more than N failures
+  failure_rate_threshold: 0.1  # Alert if failure rate exceeds 10%
+
+state:
+  db_path: "data/state.db"
+
+logging:
+  level: "INFO"
+  dir: "logs"
+  format: "json"  # json or text
+  max_file_size_mb: 10
+  backup_count: 5
