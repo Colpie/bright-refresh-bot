@@ -35,8 +35,8 @@ def mock_config():
         ),
         processor=ProcessorConfig(
             batch_size=10,
-            close_reason="refreshed",
-            multipost_channels=["website", "vdab"],
+            close_reason=3,
+            multipost_channels=[1, 2],
             dry_run=True,
             circuit_breaker_threshold=5,
             continue_on_error=True,

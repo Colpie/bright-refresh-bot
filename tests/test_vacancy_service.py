@@ -47,7 +47,7 @@ class TestVacancyService:
         """Test fetching vacancies by office"""
         await vacancy_service.get_all_open_vacancies(office_id="O1")
 
-        mock_client.get_vacancies_by_office.assert_called_once_with("O1")
+        mock_client.get_vacancies_by_office.assert_called_once_with("O1", extra_data=True)
 
     async def test_get_all_open_vacancies_empty(self, vacancy_service, mock_client):
         """Test with no vacancies"""
@@ -71,15 +71,10 @@ class TestVacancyService:
 
     async def test_get_complete_vacancy(self, vacancy_service, mock_client):
         """Test fetching complete vacancy data"""
-        mock_client.get_vacancies = AsyncMock(
-            return_value=ApiResponse(
-                success=True,
-                data=[{"id": "V001", "title": "Test Job", "status": "open"}],
-                status_code=200,
-            )
-        )
+        from src.api.models import Vacancy
+        vacancy = Vacancy(id="V001", title="Test Job")
 
-        complete = await vacancy_service.get_complete_vacancy("V001")
+        complete = await vacancy_service.get_complete_vacancy(vacancy)
 
         assert complete.vacancy.id == "V001"
         assert complete.vacancy.title == "Test Job"
@@ -88,15 +83,24 @@ class TestVacancyService:
         mock_client.get_vacancy_competences.assert_called_once_with("V001")
 
     async def test_get_complete_vacancy_not_found(self, vacancy_service, mock_client):
-        """Test vacancy not found raises error"""
-        mock_client.get_vacancies = AsyncMock(
+        """Test complete vacancy with missing related data still returns"""
+        from src.api.models import Vacancy
+        vacancy = Vacancy(id="V999", title="Missing")
+
+        mock_client.get_vacancy_documents = AsyncMock(
+            return_value=ApiResponse(success=True, data=[], status_code=200)
+        )
+        mock_client.get_vacancy_custom_fields = AsyncMock(
+            return_value=ApiResponse(success=True, data=[], status_code=200)
+        )
+        mock_client.get_vacancy_competences = AsyncMock(
             return_value=ApiResponse(success=True, data=[], status_code=200)
         )
 
-        with pytest.raises(ApiError) as exc_info:
-            await vacancy_service.get_complete_vacancy("V999")
+        complete = await vacancy_service.get_complete_vacancy(vacancy)
 
-        assert exc_info.value.status_code == 404
+        assert complete.vacancy.id == "V999"
+        assert len(complete.documents) == 0
 
     async def test_duplicate_vacancy(self, vacancy_service, mock_client, sample_complete_vacancy):
         """Test duplicating a vacancy"""
@@ -122,7 +126,7 @@ class TestVacancyService:
         result = await vacancy_service.close_vacancy("V001", "refreshed")
 
         assert result is True
-        mock_client.close_vacancy.assert_called_once_with("V001", "refreshed")
+        mock_client.close_vacancy.assert_called_once_with("V001", "refreshed", None)
 
     async def test_close_vacancy_failure(self, vacancy_service, mock_client):
         """Test close failure returns False"""

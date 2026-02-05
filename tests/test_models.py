@@ -65,13 +65,13 @@ class TestVacancy:
         assert vacancy.enterprise_name == "Tech Corp"
 
     def test_from_api_alternate_field_names(self):
-        """Test vacancy creation with alternate API field names"""
+        """Test vacancy creation with real API field names (uid, function, work_*)"""
         data = {
-            "vacancy_id": "V003",
-            "job_title": "Analyst",
-            "zip_code": "2000",
-            "regime": "full-time",
-            "experience": "2 years",
+            "uid": "V003",
+            "function": "Analyst",
+            "work_post": "2000",
+            "regime_id": "full-time",
+            "experience_id": "2 years",
         }
 
         vacancy = Vacancy.from_api(data)
@@ -95,7 +95,7 @@ class TestVacancy:
         assert vacancy.status == VacancyStatus.OPEN
 
     def test_to_api_dict(self):
-        """Test converting vacancy to API format"""
+        """Test converting vacancy to API format (uses API field names)"""
         vacancy = Vacancy(
             id="V001",
             title="Developer",
@@ -107,10 +107,10 @@ class TestVacancy:
 
         api_dict = vacancy.to_api_dict()
 
-        assert api_dict["title"] == "Developer"
-        assert api_dict["description"] == "Python dev"
+        assert api_dict["function"] == "Developer"
+        assert api_dict["desc_function"] == "Python dev"
         assert api_dict["office_id"] == "O1"
-        assert api_dict["city"] == "Brussels"
+        assert api_dict["work_city"] == "Brussels"
         assert api_dict["channels"] == ["website", "vdab"]
         assert "id" not in api_dict
         assert "status" not in api_dict
@@ -166,34 +166,39 @@ class TestVacancyCustomField:
     """Tests for VacancyCustomField model"""
 
     def test_from_api(self):
-        """Test custom field creation"""
+        """Test custom field creation from real API structure"""
         data = {
-            "field_id": "F001",
-            "field_name": "Department",
-            "value": "Engineering",
-            "field_type": "text",
+            "uid": "571",
+            "vacancy_id": "571",
+            "free1": "Engineering",
+            "free2": "",
+            "text1": "Notes here",
+            "desc1": "",
         }
 
-        field = VacancyCustomField.from_api(data)
+        cf = VacancyCustomField.from_api(data)
 
-        assert field.field_id == "F001"
-        assert field.field_name == "Department"
-        assert field.value == "Engineering"
+        assert cf.uid == "571"
+        assert cf.vacancy_id == "571"
+        assert cf.free1 == "Engineering"
+        assert cf.text1 == "Notes here"
 
-    def test_from_api_alternate_names(self):
-        """Test with alternate field names"""
+    def test_from_api_to_dict(self):
+        """Test to_dict excludes empty fields"""
         data = {
-            "id": "F002",
-            "name": "Priority",
-            "value": "High",
-            "type": "select",
+            "uid": "572",
+            "vacancy_id": "572",
+            "free1": "Value1",
+            "free2": "",
+            "text1": "Text",
         }
 
-        field = VacancyCustomField.from_api(data)
+        cf = VacancyCustomField.from_api(data)
+        result = cf.to_dict()
 
-        assert field.field_id == "F002"
-        assert field.field_name == "Priority"
-        assert field.field_type == "select"
+        assert result["free1"] == "Value1"
+        assert result["text1"] == "Text"
+        assert "free2" not in result
 
 
 class TestChannel:
@@ -258,9 +263,9 @@ class TestCompleteVacancy:
     def test_with_related_data(self):
         """Test with documents and fields"""
         vacancy = Vacancy(id="V001", title="Developer")
-        docs = [VacancyDocument("D1", "V001", "cv.pdf", "application/pdf")]
-        fields = [VacancyCustomField("F1", "Dept", "IT")]
-        comps = [VdabCompetence("C1", "Python")]
+        docs = [VacancyDocument(id="D1", vacancy_id="V001", filename="cv.pdf", content_type="application/pdf")]
+        fields = [VacancyCustomField(uid="F1", vacancy_id="V001", free1="IT")]
+        comps = [VdabCompetence(id="C1", name="Python")]
 
         complete = CompleteVacancy(
             vacancy=vacancy,
