@@ -311,39 +311,42 @@ async def _run_processor(config: Config, resume_run_id: Optional[str], limit: Op
     state_manager = StateManager(config.state.db_path)
     await state_manager.initialize()
 
-    async with BrightStaffingClient(
-        config=config.api,
-        dry_run=config.processor.dry_run,
-        circuit_breaker_threshold=config.processor.circuit_breaker_threshold,
-    ) as client:
-        processor = JobProcessor(
-            client=client,
-            config=config.processor,
-            state_manager=state_manager,
+    try:
+        async with BrightStaffingClient(
+            config=config.api,
             dry_run=config.processor.dry_run,
-            office_id=config.api.office_id,
-        )
+            circuit_breaker_threshold=config.processor.circuit_breaker_threshold,
+        ) as client:
+            processor = JobProcessor(
+                client=client,
+                config=config.processor,
+                state_manager=state_manager,
+                dry_run=config.processor.dry_run,
+                office_id=config.api.office_id,
+            )
 
-        result = await processor.run(
-            run_id=resume_run_id,
-            resume=bool(resume_run_id),
-            limit=limit,
-        )
+            result = await processor.run(
+                run_id=resume_run_id,
+                resume=bool(resume_run_id),
+                limit=limit,
+            )
 
-        reporter = Reporter(state_manager, config.alerts)
-        report = await reporter.generate_report(
-            processor.run_id,
-            dry_run=config.processor.dry_run,
-        )
+            reporter = Reporter(state_manager, config.alerts)
+            report = await reporter.generate_report(
+                processor.run_id,
+                dry_run=config.processor.dry_run,
+            )
 
-        if report:
-            report_path = Path(config.logging.dir) / f"report_{processor.run_id}.md"
-            report_path.parent.mkdir(parents=True, exist_ok=True)
-            report_path.write_text(report.to_markdown())
-            console.print(f"\nReport saved to: {report_path}")
-            await reporter.send_alerts(report)
+            if report:
+                report_path = Path(config.logging.dir) / f"report_{processor.run_id}.md"
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                report_path.write_text(report.to_markdown())
+                console.print(f"\nReport saved to: {report_path}")
+                await reporter.send_alerts(report)
 
-        return result
+            return result
+    finally:
+        await state_manager.close()
 
 
 @cli.command()
