@@ -53,5 +53,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import sys; sys.exit(0)"
 
 # Default command: Railway cron triggers this once per week
+# IMPORTANT: --limit 5 for initial testing, remove after first successful run
 ENTRYPOINT ["python", "-m", "src.main"]
-CMD ["run"]
+CMD ["run", "--limit", "5"]
