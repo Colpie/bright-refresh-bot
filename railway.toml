@@ -3,7 +3,8 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# No cron needed - the bot has its own timezone-aware scheduler
-# that handles DST automatically (Europe/Brussels).
-# Container stays running and triggers jobs at the configured time.
-restartPolicyType = "ON_FAILURE"
+# Saturday 07:30 UTC = 08:30 Brussels (winter CET)
+# In summer (CEST, after last Sunday of March): this becomes 09:30 Brussels
+# To keep 08:30 in summer, change to "30 6 * * 6"
+cronSchedule = "30 7 * * 6"
+restartPolicyType = "NEVER"

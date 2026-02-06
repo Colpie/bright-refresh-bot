@@ -52,6 +52,6 @@ ENV CONFIG_PATH=/app/config/config.yaml
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import sys; sys.exit(0)"
 
-# Default command: built-in scheduler (timezone-aware, handles DST)
+# Default command: Railway cron triggers this once per week
 ENTRYPOINT ["python", "-m", "src.main"]
-CMD ["scheduler"]
+CMD ["run"]
