@@ -3,9 +3,7 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# Railway cron: Saturday 08:30 Brussels time
-# Winter (CET = UTC+1): 08:30 Brussels = 07:30 UTC
-# Summer (CEST = UTC+2): 08:30 Brussels = 06:30 UTC
-# Using 07:30 UTC for winter. Adjust to 06:30 UTC after March clock change.
-cronSchedule = "30 7 * * 6"
-restartPolicyType = "NEVER"
+# No cron needed - the bot has its own timezone-aware scheduler
+# that handles DST automatically (Europe/Brussels).
+# Container stays running and triggers jobs at the configured time.
+restartPolicyType = "ON_FAILURE"

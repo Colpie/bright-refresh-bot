@@ -634,6 +634,55 @@ async def _run_rollback(
 
 
 # --------------------------------------------------------------------------- #
+#  Scheduler command (timezone-aware, no manual UTC conversion needed)
+# --------------------------------------------------------------------------- #
+
+
+@cli.command()
+@click.option("--config", "config_path", type=click.Path(exists=True), help="Path to config file")
+@click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
+def scheduler(config_path: Optional[str], verbose: bool):
+    """Run as a persistent scheduler (timezone-aware, handles DST automatically)"""
+    from apscheduler.schedulers.blocking import BlockingScheduler
+    from apscheduler.triggers.cron import CronTrigger
+
+    _print_banner()
+    config = _load_and_validate_config(config_path, verbose=verbose)
+
+    tz = config.schedule.timezone
+    dow_map = {0: "mon", 1: "tue", 2: "wed", 3: "thu", 4: "fri", 5: "sat", 6: "sun"}
+    day = dow_map.get(config.schedule.day_of_week, "sat")
+
+    console.print(f"[cyan]Schedule:[/cyan] Every {day} at {config.schedule.hour:02d}:{config.schedule.minute:02d} ({tz})")
+    console.print("[cyan]DST handling:[/cyan] Automatic (uses timezone-aware scheduling)")
+    console.print("[dim]Waiting for next scheduled run...[/dim]\n")
+
+    def run_job():
+        console.print(f"\n[bold green]Scheduled run triggered[/bold green]")
+        try:
+            result = asyncio.run(_run_processor(config, resume_run_id=None))
+            _print_result_summary(result)
+        except Exception as e:
+            console.print(f"[red]Scheduled run failed: {e}[/red]")
+
+    sched = BlockingScheduler()
+    sched.add_job(
+        run_job,
+        CronTrigger(
+            day_of_week=day,
+            hour=config.schedule.hour,
+            minute=config.schedule.minute,
+            timezone=tz,
+        ),
+    )
+
+    try:
+        sched.start()
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Scheduler stopped[/yellow]")
+
+
+# --------------------------------------------------------------------------- #
 #  Entry point
 # --------------------------------------------------------------------------- #
 
