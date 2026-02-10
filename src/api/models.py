@@ -269,7 +269,6 @@ _READ_ONLY_FIELDS = frozenset({
     # Firm fields
     "firm_name", "firm_vatnumber",
     # Other read-only
-    "vdab_jobcategory_id", "vdab_jobcategory_name",  # Must be set together; skip both
     "option_permanent",
     "work_country_iso",  # extraData returns this; we use it but don't send it
     # Nested arrays from extraData that API won't accept back as-is
