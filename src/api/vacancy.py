@@ -213,6 +213,30 @@ class VacancyService:
         user_id = self._resolve_assigned_user_id(complete_vacancy.vacancy)
         if user_id:
             payload["assigned_user_id"] = user_id
+            self._logger.info(
+                "consultant_assigned",
+                vacancy_id=complete_vacancy.id,
+                email=complete_vacancy.vacancy.raw_data.get("assigned_user_mail"),
+                user_id=user_id,
+            )
+        else:
+            self._logger.warning(
+                "consultant_not_found",
+                vacancy_id=complete_vacancy.id,
+                email=complete_vacancy.vacancy.raw_data.get("assigned_user_mail"),
+                user_map_size=len(self._user_map),
+            )
+
+        # Log payload summary for debugging
+        desc_fields = {k: len(v) if v else 0 for k, v in payload.items() if 'desc' in k}
+        self._logger.info(
+            "duplicating_vacancy_payload",
+            vacancy_id=complete_vacancy.id,
+            payload_fields=len(payload),
+            has_assigned_user=("assigned_user_id" in payload),
+            has_study_id=("study_id" in payload),
+            desc_fields=desc_fields,
+        )
 
         response = await self.client.add_vacancy(payload)
 

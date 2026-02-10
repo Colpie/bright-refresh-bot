@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:match.b-bright.be)",
+      "Bash(./venv/Scripts/python.exe -m src.main run:*)",
+      "Bash(dir \"G:\\\\Artistique\\\\src\" /s /b)",
+      "Bash(dir \"G:\\\\Artistique\\\\tests\" /s /b)",
+      "Bash(dir \"G:\\\\Artistique\\\\config\" /s /b)",
+      "Bash(dir \"G:\\\\Artistique\\\\scripts\" /s /b)",
+      "Bash(dir \"G:\\\\Artistique\\\\src\\\\api\" /s /b)",
+      "Bash(dir \"G:\\\\Artistique\\\\src\\\\services\" /s /b)",
+      "Bash(dir \"G:\\\\Artistique\\\\src\\\\utils\" /s /b)",
+      "Bash(./venv/Scripts/python.exe -m src.main:*)",
+      "Bash(./venv/Scripts/python.exe -m src.main history:*)",
+      "Bash(.venvScriptspython.exe -m pytest tests -v)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/ -v)",
+      "Bash(./venv/Scripts/python.exe:*)",
+      "Bash(dir:*)",
+      "Bash(find:*)",
+      "Bash(set BRIGHT_API_ACCESS_TOKEN:*)",
+      "Bash(set BRIGHT_API_BASE_URL=https://match-staging.b-bright.be/api)",
+      "Bash(pushd:*)",
+      "Bash(pip install:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(DRY_RUN=true pytest:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}

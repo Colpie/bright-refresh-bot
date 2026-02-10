@@ -13,7 +13,10 @@ Patterns detected:
 """
 
 import re
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 def reconstruct_html(text: Optional[str]) -> Optional[str]:
@@ -67,14 +70,25 @@ def reconstruct_html(text: Optional[str]) -> Optional[str]:
                         items_html.append(f'<li>{item}</li>')
                 if items_html:
                     html_parts.append('<ul>' + ''.join(items_html) + '</ul>')
+                    logger.debug(f"Detected {len(items_html)} bullet points in line")
             elif is_header:
                 # Check if the rest of this header line also contains bullets
                 # e.g. "Header:\nBullet1.Bullet2.Bullet3"
                 html_parts.append(f'<strong>{line}</strong><br>')
+                logger.debug(f"Detected header: {line[:50]}")
             else:
                 html_parts.append(f'<p>{line}</p>')
 
     result = ''.join(html_parts)
+
+    if result and result != text:
+        has_bullets = '<ul>' in result
+        has_headers = '<strong>' in result
+        logger.info(
+            f"HTML reconstruction: {len(text)} chars -> {len(result)} chars, "
+            f"bullets={has_bullets}, headers={has_headers}"
+        )
+
     return result if result else text
 
 
