@@ -552,19 +552,22 @@ class CompleteVacancy:
                 if value and key not in data:
                     data[key] = value
 
-        # Extract study_id from studies array.
+        # Convert studies array format.
         # API returns: studies = [{'level1_id': '3', 'level1_name': '...', 'level2_id': '637', ...}]
-        # API expects: study_id = 637 (or level1_id if no level2_id)
+        # API expects: studies = [{'study_id': 637}, {'study_id': ...}]
         studies = self.vacancy.raw_data.get("studies", [])
-        if studies and isinstance(studies, list) and len(studies) > 0:
-            study = studies[0]
-            # Prefer level2_id (more specific), fallback to level1_id
-            study_id = study.get("level2_id") or study.get("level1_id")
-            if study_id:
-                try:
-                    data["study_id"] = int(study_id)
-                except (ValueError, TypeError):
-                    pass
+        if studies and isinstance(studies, list):
+            studies_array = []
+            for study in studies:
+                # Prefer level2_id (more specific), fallback to level1_id
+                study_id = study.get("level2_id") or study.get("level1_id")
+                if study_id:
+                    try:
+                        studies_array.append({"study_id": int(study_id)})
+                    except (ValueError, TypeError):
+                        pass
+            if studies_array:
+                data["studies"] = studies_array
 
         # Tell API to accept HTML tags in descriptions (vs stripping them)
         data["as_html"] = "1"
