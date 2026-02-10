@@ -5,6 +5,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
+from ..utils.html_reconstruct import reconstruct_html
+
 
 # --------------------------------------------------------------------------- #
 #  Enums
@@ -473,12 +475,16 @@ class Vacancy:
         # work_street, work_street_nr, work_bus, work_lat, work_lng, etc.
         _already_mapped = frozenset({
             "function", "desc_function", "desc_profile", "desc_offer",
-            "work_city", "work_post", "work_country", "language_id",
+            "work_city", "work_post", "work_country",
+        })
+        # ID fields where 0 is NOT a valid value (means "not set")
+        _skip_zero_ids = frozenset({
+            "jobtitle_id", "jobdomain_id", "sector_id", "statute_id",
         })
         for key, value in self.raw_data.items():
             if key not in data and key not in _READ_ONLY_FIELDS and key not in _already_mapped:
-                # Skip ID fields with value 0 (means "not set" but API rejects it)
-                if key.endswith("_id") and (value == 0 or value == "0"):
+                # Only skip specific ID fields where 0 means "not set"
+                if key in _skip_zero_ids and (value == 0 or value == "0"):
                     continue
                 data[key] = value
 
@@ -520,6 +526,14 @@ class CompleteVacancy:
         Documents cannot be transferred via API (no upload endpoint exists).
         """
         data = self.vacancy.to_api_dict(for_duplication=True)
+
+        # Reconstruct HTML formatting for descriptions.
+        # The API strips HTML tags when returning data, but addVacancy
+        # accepts HTML. Reconstruct bullet points and headers from
+        # text patterns so the new vacancy preserves formatting.
+        for desc_field in ("desc_function", "desc_profile", "desc_offer"):
+            if desc_field in data and data[desc_field]:
+                data[desc_field] = reconstruct_html(data[desc_field])
 
         # Add VDAB competences as integer array
         if self.competences:
