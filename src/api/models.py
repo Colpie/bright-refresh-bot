@@ -259,9 +259,9 @@ _READ_ONLY_FIELDS = frozenset({
     "enterprise_gen_name", "enterprise_gen_city", "enterprise_gen_country",
     "enterprise_gen_post", "enterprise_gen_street", "enterprise_gen_street_nr",
     "enterprise_vatnumber",
-    # Contact/assignment fields (read-only from response)
-    "contact_name", "contact_mail",
+    # Assignment fields (read-only from response)
     "assigned_user_name", "assigned_user_mail",
+    # NOTE: contact_name and contact_mail are NOT read-only - they can be set per vacancy
     # Office display fields
     "office_name", "office_city", "office_country", "office_post",
     "office_street", "office_street_nr", "office_mail", "office_phone",
@@ -459,11 +459,9 @@ class Vacancy:
         if self.salary_max is not None:
             data["salary_amount_max"] = self.salary_max
 
-        # Contact fields - API naming
-        if self.contact_person:
-            data["contact_name"] = self.contact_person
-        if self.contact_email:
-            data["contact_mail"] = self.contact_email
+        # Contact fields are in READ_ONLY list but appear in raw_data.
+        # They'll be copied from raw_data in the loop below if present.
+        # Don't explicitly set them here to avoid duplicates.
 
         # List fields
         if self.channels:
