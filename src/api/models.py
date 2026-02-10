@@ -273,7 +273,7 @@ _READ_ONLY_FIELDS = frozenset({
     "option_permanent",
     "work_country_iso",  # extraData returns this; we use it but don't send it
     # Nested arrays from extraData that API won't accept back as-is
-    "competences", "languages", "driverlicenses",
+    "competences", "studies", "languages", "driverlicenses",
     "work_addresses", "work_regions",
 })
 
@@ -480,6 +480,7 @@ class Vacancy:
         # ID fields where 0 is NOT a valid value (means "not set")
         _skip_zero_ids = frozenset({
             "jobtitle_id", "jobdomain_id", "sector_id", "statute_id",
+            "driverlicense_id",
         })
         for key, value in self.raw_data.items():
             if key not in data and key not in _READ_ONLY_FIELDS and key not in _already_mapped:
@@ -553,6 +554,20 @@ class CompleteVacancy:
             for key, value in cf_data.items():
                 if value and key not in data:
                     data[key] = value
+
+        # Extract study_id from studies array.
+        # API returns: studies = [{'level1_id': '3', 'level1_name': '...', 'level2_id': '637', ...}]
+        # API expects: study_id = 637 (or level1_id if no level2_id)
+        studies = self.vacancy.raw_data.get("studies", [])
+        if studies and isinstance(studies, list) and len(studies) > 0:
+            study = studies[0]
+            # Prefer level2_id (more specific), fallback to level1_id
+            study_id = study.get("level2_id") or study.get("level1_id")
+            if study_id:
+                try:
+                    data["study_id"] = int(study_id)
+                except (ValueError, TypeError):
+                    pass
 
         # Add channels for multiposting
         if channels:
