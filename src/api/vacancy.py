@@ -209,10 +209,11 @@ class VacancyService:
         payload = complete_vacancy.build_duplication_payload(channels=channels)
 
         # Inject assigned user (consultant) ID from email lookup
+        # CRITICAL: The field name is "user_consulent_id" not "assigned_user_id"!
         await self._ensure_user_map()
         user_id = self._resolve_assigned_user_id(complete_vacancy.vacancy)
         if user_id:
-            payload["assigned_user_id"] = user_id
+            payload["user_consulent_id"] = user_id
             self._logger.info(
                 "consultant_assigned",
                 vacancy_id=complete_vacancy.id,
@@ -233,7 +234,7 @@ class VacancyService:
             "duplicating_vacancy_payload",
             vacancy_id=complete_vacancy.id,
             payload_fields=len(payload),
-            has_assigned_user=("assigned_user_id" in payload),
+            has_assigned_user=("user_consulent_id" in payload),
             has_study_id=("study_id" in payload),
             desc_fields=desc_fields,
         )
