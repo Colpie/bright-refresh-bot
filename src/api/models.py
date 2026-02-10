@@ -569,6 +569,9 @@ class CompleteVacancy:
                 except (ValueError, TypeError):
                     pass
 
+        # Tell API to accept HTML tags in descriptions (vs stripping them)
+        data["as_html"] = "1"
+
         # Add channels for multiposting
         if channels:
             data["channels"] = channels
