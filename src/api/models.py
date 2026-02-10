@@ -271,7 +271,7 @@ _READ_ONLY_FIELDS = frozenset({
     "option_permanent",
     "work_country_iso",  # extraData returns this; we use it but don't send it
     # Nested arrays from extraData that API won't accept back as-is
-    "competences", "studies", "languages", "driverlicenses",
+    "competences", "languages", "driverlicenses",
     "work_addresses", "work_regions",
 })
 

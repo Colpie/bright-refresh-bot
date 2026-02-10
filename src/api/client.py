@@ -321,6 +321,10 @@ class BrightStaffingClient:
 
     # -- reference data ------------------------------------------------------ #
 
+    async def get_users(self) -> ApiResponse:
+        """Get all users (consultants). Returns list with uid, full_name, mail."""
+        return await self.request("/user/getUsers")
+
     async def get_channels(self) -> ApiResponse:
         return await self.request("/channel/getChannels")
 
@@ -384,6 +388,9 @@ _MOCK_RESPONSES: dict[str, Any] = {
     "getVacancyDocuments": {"documents": []},
     "getVacancyCustomFields": {"custom_fields": []},
     "getVacancyVdabCompetences": {"VDAB competences": []},
+    "getUsers": {"users": [
+        {"uid": "1", "full_name": "Mock User", "mail": "mock@example.com", "active": "1"},
+    ]},
     "getChannels": [
         {"channel_id": "1", "name": "Website"},
         {"channel_id": "2", "name": "Vdab"},

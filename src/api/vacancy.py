@@ -37,6 +37,7 @@ class VacancyService:
     def __init__(self, client: BrightStaffingClient):
         self.client = client
         self._logger = get_logger("vacancy_service")
+        self._user_map: dict[str, str] = {}  # email -> user uid
 
     # ------------------------------------------------------------------ #
     #  Read operations
@@ -158,6 +159,33 @@ class VacancyService:
         )
 
     # ------------------------------------------------------------------ #
+    #  User lookup (for consultant assignment)
+    # ------------------------------------------------------------------ #
+
+    async def _ensure_user_map(self) -> None:
+        """Fetch users once and build email->uid lookup for consultant assignment."""
+        if self._user_map:
+            return
+        response = await self.client.get_users()
+        if not response.success:
+            self._logger.warning("get_users_failed", error=response.data)
+            return
+        users = _extract_list(response.data, "users")
+        for user in users:
+            mail = (user.get("mail") or "").strip().lower()
+            uid = user.get("uid")
+            if mail and uid:
+                self._user_map[mail] = str(uid)
+        self._logger.info("user_map_loaded", count=len(self._user_map))
+
+    def _resolve_assigned_user_id(self, vacancy: Vacancy) -> Optional[str]:
+        """Look up the assigned user ID from the vacancy's assigned_user_mail."""
+        mail = (vacancy.raw_data.get("assigned_user_mail") or "").strip().lower()
+        if not mail:
+            return None
+        return self._user_map.get(mail)
+
+    # ------------------------------------------------------------------ #
     #  Write operations
     # ------------------------------------------------------------------ #
 
@@ -179,6 +207,12 @@ class VacancyService:
         Raises ApiError if creation fails.
         """
         payload = complete_vacancy.build_duplication_payload(channels=channels)
+
+        # Inject assigned user (consultant) ID from email lookup
+        await self._ensure_user_map()
+        user_id = self._resolve_assigned_user_id(complete_vacancy.vacancy)
+        if user_id:
+            payload["assigned_user_id"] = user_id
 
         response = await self.client.add_vacancy(payload)
 
