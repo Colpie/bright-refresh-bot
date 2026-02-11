@@ -55,4 +55,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Default command: Railway cron triggers this once per week
 # IMPORTANT: --limit 5 for initial testing, remove after first successful run
 ENTRYPOINT ["python", "-m", "src.main"]
-CMD ["run", "--limit", "5"]
+CMD ["run", "--limit", "1"]
