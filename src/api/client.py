@@ -275,9 +275,29 @@ class BrightStaffingClient:
         Returns:
             ApiResponse with new/updated vacancy ID.
         """
+        # Log critical fields for debugging
+        self._logger.info(
+            "add_vacancy_payload",
+            vacancy_id=vacancy_data.get("vacancy_id"),
+            province_id=vacancy_data.get("province_id"),
+            working_hours=vacancy_data.get("working_hours"),
+            field_count=len(vacancy_data),
+            fields=sorted(vacancy_data.keys()),
+        )
+
         # API expects: {"vacancy": {vacancy_data}}
         # The _build_form_data method will JSON-encode the inner dict
-        return await self.request("/vacancy/addVacancy", {"vacancy": vacancy_data})
+        response = await self.request("/vacancy/addVacancy", {"vacancy": vacancy_data})
+
+        # Log full response for debugging
+        self._logger.info(
+            "add_vacancy_response",
+            success=response.success,
+            status_code=response.status_code,
+            data=str(response.data)[:500],
+        )
+
+        return response
 
     async def close_vacancy(
         self,

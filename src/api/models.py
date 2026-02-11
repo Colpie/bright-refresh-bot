@@ -244,36 +244,36 @@ _COUNTRY_TO_ISO: dict[str, str] = {
     "United Kingdom": "GB",
 }
 
-# Read-only fields from API responses that should not be sent back in addVacancy.
-# These are display/name fields, timestamps, or metadata that the API returns
-# but does not accept as input.
-_READ_ONLY_FIELDS = frozenset({
-    # Core read-only
-    "uid", "status", "created_at", "updated_at",
-    "reference", "ts_created", "ts_changed",
-    # Name fields (API returns these alongside ID fields)
-    "language_name", "statute_name", "regime_name",
-    "sector_name", "jobdomain_name", "jobtitle_name", "experience_name",
-    "driverlicense", "workingduration_name",
-    # Enterprise display fields
-    "enterprise_gen_name", "enterprise_gen_city", "enterprise_gen_country",
-    "enterprise_gen_post", "enterprise_gen_street", "enterprise_gen_street_nr",
-    "enterprise_vatnumber",
-    # Assignment fields (read-only from response)
-    "assigned_user_name", "assigned_user_mail",
-    # NOTE: contact_name and contact_mail are NOT read-only - they can be set per vacancy
-    # Office display fields
-    "office_name", "office_city", "office_country", "office_post",
-    "office_street", "office_street_nr", "office_mail", "office_phone",
-    "office_number",
-    # Firm fields
-    "firm_name", "firm_vatnumber",
-    # Other read-only
-    "option_permanent",
-    "work_country_iso",  # extraData returns this; we use it but don't send it
-    # Nested arrays from extraData that API won't accept back as-is
-    "competences", "studies", "languages", "driverlicenses",
-    "work_addresses", "work_regions",
+# Whitelist of fields the API accepts for addVacancy (from API documentation).
+# ONLY these fields are sent. Everything else from raw_data is dropped.
+# This prevents sending read-only/display fields that could confuse the API.
+_WRITABLE_FIELDS = frozenset({
+    # Required fields
+    "vacancy_id", "office_id", "enterprise_id", "function",
+    "jobdomain_id", "language",
+    # Optional documented fields
+    "department_id", "statute_id",
+    "desc_function", "desc_profile", "desc_offer",
+    "driverlicense_id", "option_fix", "contract_type",
+    "regime_id", "workingduration_id", "working_hours",
+    "work_street", "work_street_nr", "work_bus",
+    "work_post", "work_city", "work_country",
+    "work_lat", "work_lng",
+    "group_id", "experience_id", "province_id",
+    "salary_type", "salary_amount_min", "salary_amount_max",
+    "info_internal", "coef", "sector_id",
+    "jobtitle_id", "job_level",
+    "user_consulent_id", "is_spontaneous",
+    # Array fields (handled specially in build_duplication_payload)
+    "competences", "studies",
+    "vdab_jobcategory_id", "vdab_jobcategory_name",
+    "vdab_competences",
+    "user_id",
+    # Fields from request sample (not in docs table but accepted)
+    "enterprise_dept_id", "is_equal_by_experience",
+    # Contact fields (writable per vacancy)
+    "contact_name", "contact_mail",
+    # Custom fields (free1-6, text1-2, desc1-2) added by build_duplication_payload
 })
 
 
@@ -468,17 +468,16 @@ class Vacancy:
             data["channels"] = self.channels
 
         # Fields that the API expects as integer (from documentation).
-        # raw_data returns these as strings, but addVacancy may require int.
+        # raw_data returns these as strings, but addVacancy requires int.
         _INTEGER_FIELDS = frozenset({
-            "province_id", "group_id", "statute_id", "regime_id",
+            "office_id", "province_id", "group_id", "statute_id", "regime_id",
             "sector_id", "jobdomain_id", "jobtitle_id", "driverlicense_id",
             "experience_id", "contract_type", "workingduration_id",
             "job_level", "enterprise_id", "enterprise_dept_id",
+            "working_hours", "department_id",
         })
 
-        # Preserve extra API fields from raw_data that we haven't already set.
-        # This includes: statute_id, driverlicense_id, sector_id,
-        # work_street, work_street_nr, work_bus, work_lat, work_lng, etc.
+        # Fields already explicitly set above (avoid overwriting with raw_data)
         _already_mapped = frozenset({
             "function", "desc_function", "desc_profile", "desc_offer",
             "work_city", "work_post", "work_country",
@@ -488,8 +487,12 @@ class Vacancy:
             "jobtitle_id", "jobdomain_id", "sector_id", "statute_id",
             "driverlicense_id",
         })
+
+        # Only send fields from the API-documented whitelist.
+        # This prevents sending read-only/display/metadata fields
+        # that could interfere with vacancy creation.
         for key, value in self.raw_data.items():
-            if key not in data and key not in _READ_ONLY_FIELDS and key not in _already_mapped:
+            if key not in data and key in _WRITABLE_FIELDS and key not in _already_mapped:
                 # Only skip specific ID fields where 0 means "not set"
                 if key in _skip_zero_ids and (value == 0 or value == "0"):
                     continue
@@ -501,6 +504,17 @@ class Vacancy:
                         data[key] = value
                 else:
                     data[key] = value
+
+        # Final pass: ensure ALL integer fields are int, including ones
+        # set explicitly above (e.g. office_id, enterprise_id, jobdomain_id).
+        for key in list(data.keys()):
+            if key in _INTEGER_FIELDS and data[key] is not None:
+                raw = str(data[key]).strip()
+                if raw:
+                    try:
+                        data[key] = int(raw)
+                    except (ValueError, TypeError):
+                        pass
 
         return data
 

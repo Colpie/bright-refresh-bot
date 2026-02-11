@@ -263,45 +263,9 @@ class VacancyService:
             title=complete_vacancy.title,
             competences=len(complete_vacancy.competences),
             custom_fields=len(complete_vacancy.custom_fields),
+            province_id=complete_vacancy.vacancy.raw_data.get("province_id"),
+            working_hours=complete_vacancy.vacancy.raw_data.get("working_hours"),
         )
-
-        # Step 2: Update province_id on the new vacancy.
-        # The API ignores province_id during creation (vacancy_id=0),
-        # so we set it via a follow-up update call.
-        # addVacancy requires all mandatory fields even for updates.
-        province_id = complete_vacancy.vacancy.raw_data.get("province_id")
-        if province_id:
-            raw = complete_vacancy.vacancy.raw_data
-            update_payload = {
-                # Required fields (API rejects update without these)
-                "vacancy_id": int(new_id),
-                "office_id": raw.get("office_id", ""),
-                "enterprise_id": raw.get("enterprise_id", ""),
-                "function": raw.get("function", ""),
-                "jobdomain_id": raw.get("jobdomain_id", ""),
-                "language": complete_vacancy.vacancy.language or "nl",
-                # The field we want to set
-                "province_id": int(province_id),
-            }
-            province_name = raw.get("province_name")
-            if province_name:
-                update_payload["province_name"] = province_name
-
-            update_resp = await self.client.add_vacancy(update_payload)
-            if update_resp.success:
-                self._logger.info(
-                    "province_updated",
-                    vacancy_id=new_id,
-                    province_id=province_id,
-                    province_name=province_name,
-                )
-            else:
-                self._logger.warning(
-                    "province_update_failed",
-                    vacancy_id=new_id,
-                    province_id=province_id,
-                    response=str(update_resp.data)[:200],
-                )
 
         return new_id
 
