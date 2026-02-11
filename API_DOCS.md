@@ -248,6 +248,54 @@ These fields are NOT in the base response. They appear when `extraData=true`:
 
 ---
 
+## POST /vacancy/openVacancy
+
+Open a vacancy.
+
+Parameters:
+- `api_access_token` (string, required)
+- `api_version` (string, required)
+- `vacancy_id` (integer, required) - Unique id of vacancy object
+
+Response 200: `{"updated_vacancy_id": 0}`
+
+---
+
+## POST /vacancy/closeVacancy
+
+Close a vacancy.
+
+Parameters:
+- `api_access_token` (string, required)
+- `api_version` (string, required)
+- `vacancy_id` (integer, required) - Unique id of vacancy object
+- `closereason_id` (integer, required) - Unique id of closereason object
+- `extra_info` (string) - Extra info about the closing
+
+Response 200: `{"updated_vacancy_id": 0}`
+
+---
+
+## POST /vacancy/getVacancyCloseReasons
+
+Get possible vacancy close reasons.
+
+Parameters:
+- `api_access_token` (string, required)
+- `api_version` (string, required)
+
+Response 200:
+```json
+{
+  "closereasons": [
+    {"closereason_id": "1", "name": "Vacature werd ingevuld"},
+    {"closereason_id": "2", "name": "Vacature on hold"}
+  ]
+}
+```
+
+---
+
 ## Key Notes:
 - province_id IS a valid writable field for addVacancy (type: integer)
 - province_id references Catalog list: firm.province
