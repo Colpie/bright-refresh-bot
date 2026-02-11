@@ -264,6 +264,36 @@ class VacancyService:
             competences=len(complete_vacancy.competences),
             custom_fields=len(complete_vacancy.custom_fields),
         )
+
+        # Step 2: Update province_id on the new vacancy.
+        # The API ignores province_id during creation (vacancy_id=0),
+        # so we set it via a follow-up update call.
+        province_id = complete_vacancy.vacancy.raw_data.get("province_id")
+        if province_id:
+            update_payload = {
+                "vacancy_id": int(new_id),
+                "province_id": int(province_id),
+            }
+            province_name = complete_vacancy.vacancy.raw_data.get("province_name")
+            if province_name:
+                update_payload["province_name"] = province_name
+
+            update_resp = await self.client.add_vacancy(update_payload)
+            if update_resp.success:
+                self._logger.info(
+                    "province_updated",
+                    vacancy_id=new_id,
+                    province_id=province_id,
+                    province_name=province_name,
+                )
+            else:
+                self._logger.warning(
+                    "province_update_failed",
+                    vacancy_id=new_id,
+                    province_id=province_id,
+                    error=update_resp.data,
+                )
+
         return new_id
 
     async def open_vacancy(self, vacancy_id: str) -> bool:
