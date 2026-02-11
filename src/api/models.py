@@ -467,6 +467,15 @@ class Vacancy:
         if self.channels:
             data["channels"] = self.channels
 
+        # Fields that the API expects as integer (from documentation).
+        # raw_data returns these as strings, but addVacancy may require int.
+        _INTEGER_FIELDS = frozenset({
+            "province_id", "group_id", "statute_id", "regime_id",
+            "sector_id", "jobdomain_id", "jobtitle_id", "driverlicense_id",
+            "experience_id", "contract_type", "workingduration_id",
+            "job_level", "enterprise_id", "enterprise_dept_id",
+        })
+
         # Preserve extra API fields from raw_data that we haven't already set.
         # This includes: statute_id, driverlicense_id, sector_id,
         # work_street, work_street_nr, work_bus, work_lat, work_lng, etc.
@@ -484,7 +493,14 @@ class Vacancy:
                 # Only skip specific ID fields where 0 means "not set"
                 if key in _skip_zero_ids and (value == 0 or value == "0"):
                     continue
-                data[key] = value
+                # Convert integer fields from string to int per API docs
+                if key in _INTEGER_FIELDS and value and str(value).strip():
+                    try:
+                        data[key] = int(value)
+                    except (ValueError, TypeError):
+                        data[key] = value
+                else:
+                    data[key] = value
 
         return data
 
