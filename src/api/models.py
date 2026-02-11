@@ -264,8 +264,8 @@ _WRITABLE_FIELDS = frozenset({
     "info_internal", "coef", "sector_id",
     "jobtitle_id", "job_level",
     "user_consulent_id", "is_spontaneous",
-    # Array fields (handled specially in build_duplication_payload)
-    "competences", "studies",
+    # Array fields: competences + studies are excluded here because they
+    # need format conversion (handled by build_duplication_payload).
     "vdab_jobcategory_id", "vdab_jobcategory_name",
     "vdab_competences",
     "user_id",
