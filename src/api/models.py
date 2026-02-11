@@ -254,7 +254,7 @@ _READ_ONLY_FIELDS = frozenset({
     # Name fields (API returns these alongside ID fields)
     "language_name", "statute_name", "regime_name",
     "sector_name", "jobdomain_name", "jobtitle_name", "experience_name",
-    "driverlicense", "workingduration_name", "province_name",
+    "driverlicense", "workingduration_name",
     # Enterprise display fields
     "enterprise_gen_name", "enterprise_gen_city", "enterprise_gen_country",
     "enterprise_gen_post", "enterprise_gen_street", "enterprise_gen_street_nr",
