@@ -258,6 +258,8 @@ class BrightStaffingClient:
         params: dict[str, Any] = {"office_id": office_id}
         if extra_data:
             params["extraData"] = "true"
+        # Fetch with HTML tags so descriptions preserve original formatting
+        params["as_html"] = "1"
         if page is not None:
             params["page"] = page
         return await self.request("/vacancy/getVacanciesByOffice", params)

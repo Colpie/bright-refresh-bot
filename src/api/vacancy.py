@@ -267,6 +267,51 @@ class VacancyService:
             working_hours=complete_vacancy.vacancy.raw_data.get("working_hours"),
         )
 
+        # Step 2: Update province_id on the new vacancy.
+        # The API ignores province_id during creation (vacancy_id=0),
+        # so we must set it via a follow-up update call with the new vacancy_id.
+        province_id = complete_vacancy.vacancy.raw_data.get("province_id")
+        if province_id and str(province_id) != "0":
+            try:
+                province_int = int(province_id)
+            except (ValueError, TypeError):
+                province_int = None
+
+            if province_int:
+                raw = complete_vacancy.vacancy.raw_data
+                update_payload = {
+                    "vacancy_id": int(new_id),
+                    "office_id": int(raw.get("office_id", 0)),
+                    "enterprise_id": int(raw.get("enterprise_id", 0)),
+                    "function": raw.get("function", ""),
+                    "jobdomain_id": int(raw.get("jobdomain_id", 0)),
+                    "language": complete_vacancy.vacancy.language or "nl",
+                    "province_id": province_int,
+                }
+
+                self._logger.info(
+                    "province_update_attempt",
+                    vacancy_id=new_id,
+                    province_id=province_int,
+                    payload_keys=sorted(update_payload.keys()),
+                )
+
+                update_resp = await self.client.add_vacancy(update_payload)
+                if update_resp.success:
+                    self._logger.info(
+                        "province_updated",
+                        vacancy_id=new_id,
+                        province_id=province_int,
+                        response=str(update_resp.data)[:300],
+                    )
+                else:
+                    self._logger.warning(
+                        "province_update_failed",
+                        vacancy_id=new_id,
+                        province_id=province_int,
+                        response=str(update_resp.data)[:300],
+                    )
+
         return new_id
 
     async def open_vacancy(self, vacancy_id: str) -> bool:

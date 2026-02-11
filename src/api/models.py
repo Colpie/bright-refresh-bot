@@ -555,13 +555,15 @@ class CompleteVacancy:
         """
         data = self.vacancy.to_api_dict(for_duplication=True)
 
-        # Reconstruct HTML formatting for descriptions.
-        # The API strips HTML tags when returning data, but addVacancy
-        # accepts HTML. Reconstruct bullet points and headers from
-        # text patterns so the new vacancy preserves formatting.
+        # Descriptions are fetched with as_html=1, so they already contain
+        # the original HTML formatting (bold, bullets, etc.).
+        # Only reconstruct if the descriptions somehow lack HTML tags.
         for desc_field in ("desc_function", "desc_profile", "desc_offer"):
             if desc_field in data and data[desc_field]:
-                data[desc_field] = reconstruct_html(data[desc_field])
+                content = data[desc_field]
+                # If already has HTML tags, keep as-is (fetched with as_html=1)
+                if "<" not in content:
+                    data[desc_field] = reconstruct_html(content)
 
         # Add VDAB competences as integer array
         if self.competences:
