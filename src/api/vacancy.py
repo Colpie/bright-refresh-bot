@@ -61,23 +61,39 @@ class VacancyService:
         if office_ids:
             all_vacancies: list[Vacancy] = []
             for oid in office_ids:
-                response = await self.client.get_vacancies_by_office(
-                    oid, extra_data=True,
-                )
-                if not response.success:
-                    self._logger.error(
-                        "get_vacancies_failed", office_id=oid, error=response.data,
+                # Paginate: API returns max 100 items per page
+                page = 1
+                office_open = 0
+                office_total = 0
+                while True:
+                    response = await self.client.get_vacancies_by_office(
+                        oid, extra_data=True, page=page,
                     )
-                    continue
-                raw_list = _extract_list(response.data, "vacancies")
-                for item in raw_list:
-                    v = Vacancy.from_api(item)
-                    if v.status == VacancyStatus.OPEN:
-                        all_vacancies.append(v)
+                    if not response.success:
+                        self._logger.error(
+                            "get_vacancies_failed", office_id=oid,
+                            page=page, error=response.data,
+                        )
+                        break
+                    raw_list = _extract_list(response.data, "vacancies")
+                    if not raw_list:
+                        break  # No more pages
+                    office_total += len(raw_list)
+                    for item in raw_list:
+                        v = Vacancy.from_api(item)
+                        if v.status == VacancyStatus.OPEN:
+                            all_vacancies.append(v)
+                            office_open += 1
+                    # If we got fewer than 100 items, this was the last page
+                    if len(raw_list) < 100:
+                        break
+                    page += 1
                 self._logger.info(
                     "office_vacancies_fetched",
                     office_id=oid,
-                    count=len([i for i in raw_list if i.get("status", "").lower() == "open"]),
+                    pages_fetched=page,
+                    total_in_response=office_total,
+                    open_count=office_open,
                 )
             self._logger.info(
                 "vacancies_fetched",

@@ -334,11 +334,21 @@ class Vacancy:
         - desc_function, desc_profile, desc_offer (descriptions)
         - language_id (needs mapping to language code)
         """
-        status_str = data.get("status", "open").lower()
-        try:
-            status = VacancyStatus(status_str)
-        except ValueError:
+        # Determine open/closed status.
+        # The API does NOT return a "status" field in the standard response.
+        # With extraData=true, it returns "is_closed" ("0" = open, "1" = closed).
+        is_closed = data.get("is_closed")
+        if is_closed in ("1", 1, True):
+            status = VacancyStatus.CLOSED
+        elif is_closed in ("0", 0, False):
             status = VacancyStatus.OPEN
+        else:
+            # Fallback: check explicit status field (e.g. mock data)
+            status_str = data.get("status", "open").lower()
+            try:
+                status = VacancyStatus(status_str)
+            except ValueError:
+                status = VacancyStatus.OPEN
 
         def _get_str_or_none(key: str) -> Optional[str]:
             raw = data.get(key)
@@ -482,10 +492,13 @@ class Vacancy:
             "function", "desc_function", "desc_profile", "desc_offer",
             "work_city", "work_post", "work_country",
         })
-        # ID fields where 0 is NOT a valid value (means "not set")
+        # ID fields where 0 is NOT a valid value (means "not set").
+        # The API rejects 0 for these with "X: 0 is not a valid X id".
         _skip_zero_ids = frozenset({
-            "jobtitle_id", "jobdomain_id", "sector_id", "statute_id",
-            "driverlicense_id",
+            "jobtitle_id", "sector_id", "statute_id",
+            "driverlicense_id", "experience_id", "workingduration_id",
+            "regime_id", "contract_type", "group_id", "job_level",
+            "department_id", "enterprise_dept_id",
         })
 
         # Only send fields from the API-documented whitelist.
@@ -515,6 +528,14 @@ class Vacancy:
                         data[key] = int(raw)
                     except (ValueError, TypeError):
                         pass
+
+        # Final cleanup: remove ID fields where 0 means "not set".
+        # The explicit field setters above (e.g. self.job_title_id) treat
+        # "0" as truthy and set the field, bypassing the _skip_zero_ids
+        # check in the raw_data loop. This pass catches those cases.
+        for key in list(data.keys()):
+            if key in _skip_zero_ids and data[key] in (0, "0"):
+                del data[key]
 
         return data
 
@@ -604,8 +625,12 @@ class CompleteVacancy:
         # Tell API to accept HTML tags in descriptions (vs stripping them)
         data["as_html"] = "1"
 
-        # Add channels for multiposting
+        # Add channels for multiposting.
+        # API uses consistent array-of-objects pattern for related entities:
+        #   studies: [{"study_id": 5}]
+        #   competences: [{"competence_id": 8, "score": 4}]
+        # So channels likely follow: [{"channel_id": 1}, {"channel_id": 2}]
         if channels:
-            data["channels"] = channels
+            data["channels"] = [{"channel_id": ch} for ch in channels]
 
         return data

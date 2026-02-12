@@ -320,7 +320,12 @@ class JobProcessor:
             await self._step_open(new_vacancy_id)
             steps.append("open")
 
-            # 5 - Close original
+            # 5 - Update province (API ignores province_id during creation)
+            await self._step_update_province(new_vacancy_id, complete)
+            steps.append("province")
+
+            # 6 - Close original
+            # Multiposting (channels) is handled via addVacancy payload
             await self._step_close(vacancy)
             steps.append("close")
 
@@ -448,6 +453,64 @@ class JobProcessor:
                 )
 
         self._job_logger.log_vacancy_step(new_vacancy_id, "open", "success")
+
+    async def _step_update_province(self, new_vacancy_id: str, complete: CompleteVacancy) -> None:
+        """Update province_id on the new vacancy after opening.
+
+        The API silently ignores province_id during creation (vacancy_id=0).
+        We must send a separate update (vacancy_id=<new_id>) after opening.
+        Failures here are non-fatal - they don't prevent closing the original.
+        """
+        province_id = complete.vacancy.raw_data.get("province_id")
+        if not province_id or str(province_id) == "0":
+            return
+
+        if self.dry_run:
+            self._job_logger.log_dry_run(
+                "update_province",
+                {"vacancy_id": new_vacancy_id, "province_id": province_id},
+            )
+            return
+
+        try:
+            province_int = int(province_id)
+            raw = complete.vacancy.raw_data
+            update_payload = {
+                "vacancy_id": int(new_vacancy_id),
+                "office_id": int(raw.get("office_id", 0)),
+                "enterprise_id": int(raw.get("enterprise_id", 0)),
+                "function": raw.get("function", ""),
+                "jobdomain_id": int(raw.get("jobdomain_id", 0)),
+                "language": complete.vacancy.language or "nl",
+                "province_id": province_int,
+            }
+
+            self._logger.info(
+                "province_update_attempt",
+                vacancy_id=new_vacancy_id,
+                province_id=province_int,
+            )
+
+            response = await self.vacancy_service.client.add_vacancy(update_payload)
+            self._logger.info(
+                "province_update_result",
+                vacancy_id=new_vacancy_id,
+                province_id=province_int,
+                success=response.success,
+                response=str(response.data)[:300],
+            )
+
+        except CircuitBreakerOpen:
+            raise  # Must propagate to stop the run
+        except Exception as exc:
+            # Non-fatal: log but don't crash the pipeline
+            self._logger.error(
+                "province_update_error",
+                vacancy_id=new_vacancy_id,
+                province_id=province_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
 
     async def _step_close(self, vacancy: Vacancy) -> None:
         self._job_logger.log_vacancy_step(vacancy.id, "close", "in_progress")
