@@ -316,7 +316,17 @@ class VacancyService:
 
         Returns True on success, False on failure.
         """
-        response = await self.client.close_vacancy(vacancy_id, closereason_id, extra_info)
+        try:
+            response = await self.client.close_vacancy(vacancy_id, closereason_id, extra_info)
+        except ApiError as exc:
+            self._logger.error(
+                "close_vacancy_api_error",
+                vacancy_id=vacancy_id,
+                closereason_id=closereason_id,
+                status_code=exc.status_code,
+                error=str(exc),
+            )
+            return False
 
         if not response.success:
             self._logger.error(

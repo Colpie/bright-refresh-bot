@@ -430,6 +430,19 @@ class BrightStaffingClient:
                 if isinstance(data, dict) and data.get("status") == "error":
                     return ApiResponse(success=False, data=data, status_code=200)
 
+                # Check for VDAB-style rejection: status=success but results=[None]
+                # This means the jobboard rejected the vacancy (e.g. invalid competence codes)
+                if isinstance(data, dict) and data.get("status") == "success":
+                    results = data.get("results", [])
+                    if results and all(r is None for r in results):
+                        self._logger.warning(
+                            "multipost_rejected",
+                            vacancy_id=vacancy_id,
+                            jobboard_id=jobboard_id,
+                            reason="Jobboard returned null results (likely invalid data for this channel)",
+                        )
+                        return ApiResponse(success=False, data=data, status_code=200)
+
                 return ApiResponse(success=True, data=data, status_code=200)
 
             return ApiResponse(success=False, data=response.text, status_code=response.status_code)

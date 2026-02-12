@@ -318,7 +318,21 @@ class JobProcessor:
     # ------------------------------------------------------------------ #
 
     async def _process_single(self, vacancy: Vacancy) -> ProcessingResult:
-        """Run the full pipeline for one vacancy: fetch -> duplicate -> close."""
+        """Run the full pipeline for one vacancy.
+
+        Pipeline order:
+          1. fetch       - Get complete vacancy data
+          2. backup_docs - Download documents locally
+          3. duplicate   - Create new vacancy (vacancy_id=0)
+          4. open        - Open the new vacancy
+          5. province    - Update province_id (non-fatal)
+          6. close       - Close the ORIGINAL vacancy
+          7. multipost   - Post to Website + VDAB (only after close succeeds)
+
+        Close is done BEFORE multipost so that if close fails we can
+        cleanly roll back by closing the new vacancy.  This guarantees
+        requirement #5: no duplicate active jobs.
+        """
         start = time.monotonic()
         steps: list[str] = []
         new_vacancy_id: Optional[str] = None
@@ -350,15 +364,37 @@ class JobProcessor:
             await self._step_update_province(new_vacancy_id, complete)
             steps.append("province")
 
-            # 6 - Multipost to Website + VDAB
-            await self._step_multipost(new_vacancy_id)
-            steps.append("multipost")
-
-            # 7 - Close original
-            await self._step_close(vacancy)
+            # 6 - Close original (BEFORE multipost for safe rollback)
+            closed = await self._step_close(vacancy)
             steps.append("close")
 
+            if not closed:
+                # Close failed -> rollback: close the NEW vacancy to prevent duplicates
+                await self._step_rollback_new(new_vacancy_id, vacancy.id)
+                steps.append("rollback")
+
+                duration_ms = self._elapsed_ms(start)
+                await self.state_manager.update_vacancy_status(
+                    self._run_id, vacancy.id, "failed",
+                    new_vacancy_id=new_vacancy_id,
+                    error_message="Close original failed - rolled back new vacancy",
+                )
+                self._job_logger.log_vacancy_complete(vacancy.id, new_vacancy_id, "failed", duration_ms)
+
+                return ProcessingResult(
+                    original_vacancy_id=vacancy.id,
+                    success=False,
+                    new_vacancy_id=new_vacancy_id,
+                    error_message="Close original failed - rolled back new vacancy",
+                    duration_ms=duration_ms,
+                    steps_completed=steps,
+                )
+
             await self.state_manager.update_vacancy_status(self._run_id, vacancy.id, "closed")
+
+            # 7 - Multipost to Website + VDAB (only after close succeeded)
+            await self._step_multipost(new_vacancy_id)
+            steps.append("multipost")
 
             # Done
             duration_ms = self._elapsed_ms(start)
@@ -565,27 +601,60 @@ class JobProcessor:
             )
             return
 
+        channel_names = {1: "Website", 2: "VDAB"}
+
         for jobboard_id in self.config.multipost_channels:
+            channel_name = channel_names.get(jobboard_id, f"channel_{jobboard_id}")
             try:
                 response = await self.client.multipost_vacancy(new_vacancy_id, jobboard_id)
-                self._logger.info(
-                    "multipost_result",
-                    vacancy_id=new_vacancy_id,
-                    jobboard_id=jobboard_id,
-                    success=response.success,
-                    data=str(response.data)[:200],
-                )
+
+                # If "Access denied", session may have expired -> re-login and retry once
+                if (not response.success
+                        and isinstance(response.data, dict)
+                        and response.data.get("status") == "error"):
+                    self._logger.warning(
+                        "multipost_session_expired",
+                        vacancy_id=new_vacancy_id,
+                        channel=channel_name,
+                    )
+                    await self._ensure_web_session()
+                    if self.client._web_session_cookies:
+                        response = await self.client.multipost_vacancy(
+                            new_vacancy_id, jobboard_id,
+                        )
+
+                if response.success:
+                    self._logger.info(
+                        "multipost_success",
+                        vacancy_id=new_vacancy_id,
+                        channel=channel_name,
+                        jobboard_id=jobboard_id,
+                    )
+                else:
+                    self._logger.warning(
+                        "multipost_rejected",
+                        vacancy_id=new_vacancy_id,
+                        channel=channel_name,
+                        jobboard_id=jobboard_id,
+                        data=str(response.data)[:300],
+                    )
             except CircuitBreakerOpen:
                 raise
             except Exception as exc:
                 self._logger.error(
                     "multipost_error",
                     vacancy_id=new_vacancy_id,
+                    channel=channel_name,
                     jobboard_id=jobboard_id,
                     error=str(exc),
                 )
 
-    async def _step_close(self, vacancy: Vacancy) -> None:
+    async def _step_close(self, vacancy: Vacancy) -> bool:
+        """Close the original vacancy.
+
+        Returns True on success, False on failure.
+        On failure the caller should rollback (close the new vacancy).
+        """
         self._job_logger.log_vacancy_step(vacancy.id, "close", "in_progress")
 
         # close_reason should be an integer (closereason_id from API)
@@ -599,19 +668,87 @@ class JobProcessor:
                 "close_vacancy",
                 {"vacancy_id": vacancy.id, "closereason_id": closereason_id},
             )
-        else:
+            self._job_logger.log_vacancy_step(vacancy.id, "close", "success")
+            return True
+
+        try:
             ok = await self.vacancy_service.close_vacancy(vacancy.id, closereason_id)
             if not ok:
+                self._logger.error(
+                    "close_vacancy_failed",
+                    vacancy_id=vacancy.id,
+                    closereason_id=closereason_id,
+                )
                 self._job_logger.log_vacancy_step(
                     vacancy.id, "close", "failed", {"error": "Close returned false"},
                 )
-                raise ApiError(
-                    status_code=400,
-                    message=f"Failed to close vacancy {vacancy.id}",
-                    endpoint="/vacancy/closeVacancy",
-                )
+                return False
+        except CircuitBreakerOpen:
+            raise  # Must propagate to stop the run
+        except Exception as exc:
+            self._logger.error(
+                "close_vacancy_error",
+                vacancy_id=vacancy.id,
+                closereason_id=closereason_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            self._job_logger.log_vacancy_step(
+                vacancy.id, "close", "failed", {"error": str(exc)},
+            )
+            return False
 
         self._job_logger.log_vacancy_step(vacancy.id, "close", "success")
+        return True
+
+    async def _step_rollback_new(self, new_vacancy_id: str, original_id: str) -> None:
+        """Rollback: close the NEW vacancy because closing the original failed.
+
+        This ensures no duplicate active jobs remain (requirement #5).
+        """
+        self._logger.warning(
+            "rollback_closing_new_vacancy",
+            new_vacancy_id=new_vacancy_id,
+            original_id=original_id,
+            reason="Could not close original - closing new duplicate to prevent duplicates",
+        )
+
+        if self.dry_run:
+            self._job_logger.log_dry_run(
+                "rollback_close_new",
+                {"new_vacancy_id": new_vacancy_id, "original_id": original_id},
+            )
+            return
+
+        closereason_id = self.config.close_reason
+        if isinstance(closereason_id, str):
+            closereason_id = int(closereason_id) if closereason_id.isdigit() else 3
+
+        try:
+            ok = await self.vacancy_service.close_vacancy(new_vacancy_id, closereason_id)
+            if ok:
+                self._logger.info(
+                    "rollback_success",
+                    new_vacancy_id=new_vacancy_id,
+                    original_id=original_id,
+                )
+            else:
+                self._logger.error(
+                    "rollback_close_failed",
+                    new_vacancy_id=new_vacancy_id,
+                    original_id=original_id,
+                    reason="Both original and new vacancy remain open - manual intervention needed",
+                )
+        except CircuitBreakerOpen:
+            raise
+        except Exception as exc:
+            self._logger.error(
+                "rollback_close_error",
+                new_vacancy_id=new_vacancy_id,
+                original_id=original_id,
+                error=str(exc),
+                reason="Both original and new vacancy remain open - manual intervention needed",
+            )
 
     # -- helpers ------------------------------------------------------------- #
 

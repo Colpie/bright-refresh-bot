@@ -48,9 +48,8 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV CONFIG_PATH=/app/config/config.yaml
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)"
+# No HEALTHCHECK: this is a cron job that runs once and exits.
+# A HEALTHCHECK can cause Railway to restart the container after exit.
 
 # Default command: Railway cron triggers this once per week
 # Use --limit 1 for testing, remove when ready for production
