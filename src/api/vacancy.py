@@ -359,50 +359,51 @@ class VacancyService:
                 self._logger.error("refresh_open_failed", new_id=new_id, original_id=original_id)
 
             # Step 4: Update province AFTER opening the vacancy.
-            # The API ignores province_id during creation (vacancy_id=0)
-            # and possibly during draft state. Update it on the open vacancy
-            # using the full payload so no fields are cleared.
+            # The API ignores province_id during creation (vacancy_id=0).
+            # Use MINIMAL payload (required fields only + province_id)
+            # to avoid any field validation issues.
+            # Wrapped in try/except so failures don't prevent closing.
             province_id = complete.vacancy.raw_data.get("province_id")
             if province_id and str(province_id) != "0":
                 try:
                     province_int = int(province_id)
-                except (ValueError, TypeError):
-                    province_int = None
+                    raw = complete.vacancy.raw_data
 
-                if province_int:
-                    # Rebuild the full payload but with the new vacancy_id
-                    # so the API treats this as a complete save (not partial).
-                    update_payload = complete.build_duplication_payload(channels=channels)
-                    update_payload["vacancy_id"] = int(new_id)
-                    update_payload["province_id"] = province_int
-
-                    # Also inject consultant
-                    user_id = self._resolve_assigned_user_id(complete.vacancy)
-                    if user_id:
-                        update_payload["user_consulent_id"] = user_id
+                    # Minimal payload: only required fields + province_id
+                    update_payload = {
+                        "vacancy_id": int(new_id),
+                        "office_id": int(raw.get("office_id", 0)),
+                        "enterprise_id": int(raw.get("enterprise_id", 0)),
+                        "function": raw.get("function", ""),
+                        "jobdomain_id": int(raw.get("jobdomain_id", 0)),
+                        "language": complete.vacancy.language or "nl",
+                        "province_id": province_int,
+                    }
 
                     self._logger.info(
                         "province_update_attempt",
                         vacancy_id=new_id,
                         province_id=province_int,
-                        field_count=len(update_payload),
+                        payload=update_payload,
                     )
 
                     update_resp = await self.client.add_vacancy(update_payload)
-                    if update_resp.success:
-                        self._logger.info(
-                            "province_updated",
-                            vacancy_id=new_id,
-                            province_id=province_int,
-                            response=str(update_resp.data)[:300],
-                        )
-                    else:
-                        self._logger.warning(
-                            "province_update_failed",
-                            vacancy_id=new_id,
-                            province_id=province_int,
-                            response=str(update_resp.data)[:300],
-                        )
+                    self._logger.info(
+                        "province_update_result",
+                        vacancy_id=new_id,
+                        province_id=province_int,
+                        success=update_resp.success,
+                        response=str(update_resp.data)[:500],
+                    )
+                except Exception as exc:
+                    # Never let province update crash the whole flow
+                    self._logger.error(
+                        "province_update_error",
+                        vacancy_id=new_id,
+                        province_id=province_id,
+                        error=str(exc),
+                        error_type=type(exc).__name__,
+                    )
 
             # Step 5: Close original
             closed = await self.close_vacancy(
