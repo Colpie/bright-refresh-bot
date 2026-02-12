@@ -625,12 +625,8 @@ class CompleteVacancy:
         # Tell API to accept HTML tags in descriptions (vs stripping them)
         data["as_html"] = "1"
 
-        # Add channels for multiposting.
-        # API uses consistent array-of-objects pattern for related entities:
-        #   studies: [{"study_id": 5}]
-        #   competences: [{"competence_id": 8, "score": 4}]
-        # So channels likely follow: [{"channel_id": 1}, {"channel_id": 2}]
-        if channels:
-            data["channels"] = [{"channel_id": ch} for ch in channels]
+        # Note: multiposting (channels) is NOT handled via addVacancy.
+        # It uses a separate internal web endpoint (/multiposting/addVacancy)
+        # which is called by _step_multipost in the processor.
 
         return data

@@ -27,6 +27,9 @@ class ApiConfig(BaseModel):
     backoff_base: float = 2.0
     backoff_multiplier: float = 2.0
     max_backoff: float = 60.0
+    # Web login credentials for multiposting (session-based endpoint)
+    web_username: str = ""
+    web_password: str = ""
 
     @field_validator("base_url")
     @classmethod
@@ -184,6 +187,8 @@ _ENV_OVERRIDES: dict[str, tuple[str, type]] = {
     "STATE_DB_PATH": ("state.db_path", str),
     "TELEGRAM_BOT_TOKEN": ("alerts.telegram.bot_token", str),
     "TELEGRAM_CHAT_ID": ("alerts.telegram.chat_id", str),
+    "BRIGHT_WEB_USERNAME": ("api.web_username", str),
+    "BRIGHT_WEB_PASSWORD": ("api.web_password", str),
 }
 
 

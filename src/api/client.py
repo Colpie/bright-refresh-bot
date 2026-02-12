@@ -110,6 +110,11 @@ class BrightStaffingClient:
         self._logger = get_logger("api_client")
         self._client: Optional[httpx.AsyncClient] = None
 
+        # Web session for multiposting (internal endpoint)
+        # base_url is e.g. "https://match.b-bright.be/api" -> web root is "https://match.b-bright.be"
+        self._web_base_url = self._base_url.rsplit("/api", 1)[0]
+        self._web_session_cookies: Optional[dict[str, str]] = None
+
     # -- context manager ----------------------------------------------------- #
 
     async def __aenter__(self) -> "BrightStaffingClient":
@@ -355,6 +360,144 @@ class BrightStaffingClient:
 
     async def get_offices(self) -> ApiResponse:
         return await self.request("/office/getOffices")
+
+    # -- multiposting (web session) ----------------------------------------- #
+
+    async def multipost_vacancy(
+        self,
+        vacancy_id: str,
+        jobboard_id: int,
+    ) -> ApiResponse:
+        """Trigger multiposting for a vacancy to a specific jobboard.
+
+        This uses the internal web endpoint (not the public API) which
+        requires session-based authentication via web login cookies.
+
+        Args:
+            vacancy_id: The vacancy ID to multipost.
+            jobboard_id: The jobboard/channel ID (1=Website, 2=VDAB).
+
+        Returns:
+            ApiResponse with the result.
+        """
+        if self.dry_run:
+            self._logger.info(
+                "dry_run_multipost",
+                vacancy_id=vacancy_id,
+                jobboard_id=jobboard_id,
+            )
+            return ApiResponse(success=True, data={"mock": True}, status_code=200)
+
+        if not self._web_session_cookies:
+            raise ApiError(
+                status_code=401,
+                message="No web session. Call web_login() first.",
+                endpoint="/multiposting/addVacancy",
+            )
+
+        await self._rate_limiter.acquire()
+
+        if not self._client:
+            raise RuntimeError("Client not initialised. Use 'async with' context manager.")
+
+        # The internal endpoint uses url-encoded form data with session cookies
+        url = f"{self._web_base_url}/index.php/multiposting/addVacancy"
+
+        try:
+            response = await self._client.post(
+                url,
+                data={
+                    "vacancy_id": str(vacancy_id),
+                    "jobboard_id": str(jobboard_id),
+                },
+                cookies=self._web_session_cookies,
+            )
+
+            self._logger.debug(
+                "multipost_response",
+                vacancy_id=vacancy_id,
+                jobboard_id=jobboard_id,
+                status_code=response.status_code,
+            )
+
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                except Exception:
+                    data = response.text
+
+                # Check for "Access denied" or error status
+                if isinstance(data, dict) and data.get("status") == "error":
+                    return ApiResponse(success=False, data=data, status_code=200)
+
+                return ApiResponse(success=True, data=data, status_code=200)
+
+            return ApiResponse(success=False, data=response.text, status_code=response.status_code)
+
+        except httpx.HTTPError as exc:
+            raise ApiError(
+                status_code=0,
+                message=str(exc),
+                endpoint="/multiposting/addVacancy",
+            )
+
+    async def web_login(self, username: str, password: str) -> bool:
+        """Log in to the BrightStaffing web app to get session cookies.
+
+        Required for multiposting, which uses internal web endpoints.
+
+        Returns True on success, False on failure.
+        """
+        if not self._client:
+            raise RuntimeError("Client not initialised. Use 'async with' context manager.")
+
+        login_url = f"{self._web_base_url}/index.php/auth/login"
+
+        try:
+            response = await self._client.post(
+                login_url,
+                data={
+                    "username": username,
+                    "password": password,
+                    "remember": "1",
+                },
+                follow_redirects=False,
+            )
+
+            # Successful login returns a redirect (302) with session cookies
+            cookies = dict(response.cookies)
+
+            # Also check for set-cookie headers from redirects
+            if not cookies and response.status_code in (301, 302, 303):
+                # Follow the redirect manually to collect all cookies
+                redirect_resp = await self._client.get(
+                    response.headers.get("location", login_url),
+                    follow_redirects=True,
+                )
+                cookies = dict(self._client.cookies)
+
+            if not cookies:
+                # Collect cookies from the client jar
+                cookies = dict(self._client.cookies)
+
+            if cookies:
+                self._web_session_cookies = cookies
+                self._logger.info(
+                    "web_login_success",
+                    cookie_count=len(cookies),
+                )
+                return True
+
+            self._logger.error(
+                "web_login_failed",
+                status_code=response.status_code,
+                response=response.text[:300],
+            )
+            return False
+
+        except Exception as exc:
+            self._logger.error("web_login_error", error=str(exc))
+            return False
 
 
 # --------------------------------------------------------------------------- #

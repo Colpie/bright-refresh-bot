@@ -122,10 +122,36 @@ class JobProcessor:
             raise
 
     # ------------------------------------------------------------------ #
+    #  Web session (for multiposting)
+    # ------------------------------------------------------------------ #
+
+    async def _ensure_web_session(self) -> None:
+        """Log in to BrightStaffing web app for multiposting access."""
+        username = self.client.config.web_username
+        password = self.client.config.web_password
+
+        if not username or not password:
+            self._logger.warning(
+                "web_login_skipped",
+                reason="BRIGHT_WEB_USERNAME / BRIGHT_WEB_PASSWORD not set, multiposting will be skipped",
+            )
+            return
+
+        self._logger.info("web_login_attempt", username=username)
+        ok = await self.client.web_login(username, password)
+        if ok:
+            self._logger.info("web_login_success", username=username)
+        else:
+            self._logger.error("web_login_failed", username=username)
+
+    # ------------------------------------------------------------------ #
     #  Run modes
     # ------------------------------------------------------------------ #
 
     async def _fresh_run(self) -> BatchResult:
+        # Log in to web app for multiposting (non-fatal if credentials missing)
+        await self._ensure_web_session()
+
         self._logger.info("fetching_open_vacancies", run_id=self._run_id)
 
         # Handle "all" offices: discover all offices, then fetch vacancies
@@ -324,8 +350,11 @@ class JobProcessor:
             await self._step_update_province(new_vacancy_id, complete)
             steps.append("province")
 
-            # 6 - Close original
-            # Multiposting (channels) is handled via addVacancy payload
+            # 6 - Multipost to Website + VDAB
+            await self._step_multipost(new_vacancy_id)
+            steps.append("multipost")
+
+            # 7 - Close original
             await self._step_close(vacancy)
             steps.append("close")
 
@@ -511,6 +540,50 @@ class JobProcessor:
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
+
+    async def _step_multipost(self, new_vacancy_id: str) -> None:
+        """Trigger multiposting to configured channels (Website, VDAB).
+
+        Uses the internal web endpoint /multiposting/addVacancy which
+        requires session-based auth. Failures are non-fatal.
+        """
+        if not self.config.multipost_channels:
+            return
+
+        if self.dry_run:
+            self._job_logger.log_dry_run(
+                "multipost",
+                {"vacancy_id": new_vacancy_id, "channels": self.config.multipost_channels},
+            )
+            return
+
+        if not self.client._web_session_cookies:
+            self._logger.warning(
+                "multipost_skipped_no_session",
+                vacancy_id=new_vacancy_id,
+                reason="No web session - set BRIGHT_WEB_USERNAME and BRIGHT_WEB_PASSWORD",
+            )
+            return
+
+        for jobboard_id in self.config.multipost_channels:
+            try:
+                response = await self.client.multipost_vacancy(new_vacancy_id, jobboard_id)
+                self._logger.info(
+                    "multipost_result",
+                    vacancy_id=new_vacancy_id,
+                    jobboard_id=jobboard_id,
+                    success=response.success,
+                    data=str(response.data)[:200],
+                )
+            except CircuitBreakerOpen:
+                raise
+            except Exception as exc:
+                self._logger.error(
+                    "multipost_error",
+                    vacancy_id=new_vacancy_id,
+                    jobboard_id=jobboard_id,
+                    error=str(exc),
+                )
 
     async def _step_close(self, vacancy: Vacancy) -> None:
         self._job_logger.log_vacancy_step(vacancy.id, "close", "in_progress")
