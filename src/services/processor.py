@@ -601,7 +601,7 @@ class JobProcessor:
             )
             return
 
-        channel_names = {1: "Website", 2: "VDAB"}
+        channel_names = {1: "Website", 3: "VDAB"}
 
         for jobboard_id in self.config.multipost_channels:
             channel_name = channel_names.get(jobboard_id, f"channel_{jobboard_id}")

@@ -65,7 +65,7 @@ class ProcessorConfig(BaseModel):
 
     batch_size: int = 50
     close_reason: int = 3  # closereason_id: 3 = "Dubbele vacature"
-    multipost_channels: list[int] = Field(default_factory=lambda: [1, 2])  # 1=Website, 2=Vdab
+    multipost_channels: list[int] = Field(default_factory=lambda: [1, 3])  # 1=Website, 3=Vdab
     dry_run: bool = False
     circuit_breaker_threshold: int = 10
     continue_on_error: bool = True

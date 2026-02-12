@@ -18,7 +18,7 @@ processor:
   close_reason: 3  # closereason_id: 3 = "Dubbele vacature"
   multipost_channels:
     - 1  # Website
-    - 2  # Vdab
+    - 3  # Vdab (jobboard_id=3, confirmed from UI network capture)
   dry_run: false
   # Stop processing if this many consecutive failures occur
   circuit_breaker_threshold: 10
