@@ -140,37 +140,37 @@ class VacancyService:
 
     async def get_complete_vacancy(self, vacancy: Vacancy) -> CompleteVacancy:
         """
-        Enrich a vacancy with VDAB competences and documents.
+        Enrich a vacancy with custom fields, VDAB competences, and documents.
 
         The vacancy should already have full data from extraData=true listing.
         This fetches the additional data needed for duplication in parallel.
         Documents are fetched for backup but cannot be transferred via API.
-
-        Note: getVacancyCustomFields is NOT called because the endpoint
-        does not exist (returns 404). Custom fields are not available via API.
         """
         vacancy_id = vacancy.id
 
-        docs_resp, comps_resp = await asyncio.gather(
+        docs_resp, fields_resp, comps_resp = await asyncio.gather(
             self.client.get_vacancy_documents(vacancy_id),
+            self.client.get_vacancy_custom_fields(vacancy_id),
             self.client.get_vacancy_competences(vacancy_id),
             return_exceptions=True,
         )
 
         documents = _safe_parse_list(docs_resp, lambda d: VacancyDocument.from_api(d, vacancy_id), "documents")
+        custom_fields = _safe_parse_list(fields_resp, VacancyCustomField.from_api, "custom_fields")
         competences = _safe_parse_list(comps_resp, VdabCompetence.from_api, "VDAB competences")
 
         self._logger.debug(
             "complete_vacancy_fetched",
             vacancy_id=vacancy_id,
             documents=len(documents),
+            custom_fields=len(custom_fields),
             competences=len(competences),
         )
 
         return CompleteVacancy(
             vacancy=vacancy,
             documents=documents,
-            custom_fields=[],
+            custom_fields=custom_fields,
             competences=competences,
         )
 

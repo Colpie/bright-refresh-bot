@@ -337,7 +337,17 @@ class BrightStaffingClient:
         return await self.request("/vacancy/getVacancyDocuments", {"vacancy_id": vacancy_id})
 
     async def get_vacancy_custom_fields(self, vacancy_id: str) -> ApiResponse:
-        return await self.request("/vacancy/getVacancyCustomFields", {"vacancy_id": vacancy_id})
+        """Fetch custom fields for a vacancy.
+
+        Returns empty custom_fields list on 404 (vacancy has no custom fields)
+        instead of raising, to avoid circuit breaker noise.
+        """
+        try:
+            return await self.request("/vacancy/getVacancyCustomFields", {"vacancy_id": vacancy_id})
+        except ApiError as exc:
+            if exc.status_code == 404:
+                return ApiResponse(success=True, data={"custom_fields": []}, status_code=200)
+            raise
 
     async def get_vacancy_competences(self, vacancy_id: str) -> ApiResponse:
         return await self.request("/vacancy/getVacancyVdabCompetences", {"vacancy_id": vacancy_id})
