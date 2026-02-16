@@ -1,0 +1,57 @@
+2026-02-11 01:53:26 [debug    ] api_response                   duration_ms=6218 endpoint=/vacancy/getVacanciesByOffice status_code=200
+2026-02-11 01:53:26 [info     ] office_vacancies_fetched       count=0 office_id=1
+2026-02-11 01:53:26 [info     ] vacancies_fetched              offices=1 open_count=225 total=225
+Testing with vacancy: 13143 - CHAUFFEUR C / CE
+
+2026-02-11 01:53:27 [debug    ] api_response                   duration_ms=172 endpoint=/vacancy/getVacancyDocuments status_code=200
+2026-02-11 01:53:28 [debug    ] api_response                   duration_ms=172 endpoint=/vacancy/getVacancyCustomFields status_code=200
+2026-02-11 01:53:28 [debug    ] api_response                   duration_ms=719 endpoint=/vacancy/getVacancyVdabCompetences status_code=200
+2026-02-11 01:53:28 [debug    ] complete_vacancy_fetched       competences=3 custom_fields=1 documents=0 vacancy_id=13143
+2026-02-11 01:53:29 [debug    ] api_response                   duration_ms=186 endpoint=/user/getUsers status_code=200
+2026-02-11 01:53:29 [info     ] user_map_loaded                count=9
+=== FIELDS IN RAW_DATA BUT NOT IN PAYLOAD (36) ===
+  assigned_user_mail: 'Dario@match-jobs.be'
+  assigned_user_name: 'Dario Verheyen'
+  driverlicense: 'C+E'
+  enterprise_gen_city: 'Kruisem'
+  enterprise_gen_country: 'België'
+  enterprise_gen_name: 'Locquet Technical Supplies'
+  enterprise_gen_post: '9770'
+  enterprise_gen_street: 'Karreweg'
+  enterprise_gen_street_nr: '139'
+  enterprise_vatnumber: 'BE0437720121'
+  experience_name: 'Geen'
+  firm_name: 'Verzelen Maes Consultants'
+  firm_vatnumber: '0754523903'
+  jobdomain_name: 'Logistics, Transport & Distributie'
+  jobtitle_name: 'Chauffeur C'
+  language_name: 'Nederlands'
+  office_city: 'Oudenaarde'
+  office_country: 'België'
+  office_mail: 'ovl@match-jobs.be'
+  office_name: 'Match HR Oost-Vlaanderen'
+  office_number: 'M001'
+  office_phone: '055/35 19 88'
+  office_post: '9700'
+  office_street: 'Beverestraat'
+  office_street_nr: '18'
+  option_permanent: '2'
+  reference: 'M001/013143'
+  regime_name: 'Dagwerk'
+  sector_name: 'Logistics, Transport & Distributie'
+  statute_name: ''
+  studies: [{'level1_id': '1', 'level1_name': '0. Geen specifieke studievereisten'}]
+  ts_changed: '1769810843'
+  ts_created: '1769810055'
+  uid: '13143'
+  work_country_iso: 'BE'
+  workingduration_name: 'Voltijds'
+
+=== FIELDS IN PAYLOAD BUT NOT IN RAW_DATA (7) ===
+  as_html: '1'
+  channels: <list>
+  language: 'nl'
+  study_id: 1
+  user_consulent_id: '53'
+  vacancy_id: 0
+  vdab_competences: <list>
