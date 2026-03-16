@@ -286,10 +286,11 @@ class JobProcessor:
                     return result
 
         # Process all vacancies concurrently with semaphore limiting batch size
-        results = await asyncio.gather(
-            *[process_with_semaphore(v, i) for i, v in enumerate(vacancies)],
-            return_exceptions=False,
-        )
+        tasks = [process_with_semaphore(v, i) for i, v in enumerate(vacancies)]
+        results = []
+
+        for task in tasks:
+            results.append(await task)
 
         successful = sum(1 for r in results if r.success)
         failed = sum(1 for r in results if not r.success)
@@ -393,7 +394,14 @@ class JobProcessor:
             await self.state_manager.update_vacancy_status(self._run_id, vacancy.id, "closed")
 
             # 7 - Multipost to Website + VDAB (only after close succeeded)
-            await self._step_multipost(new_vacancy_id)
+            try:
+                await self._step_multipost(new_vacancy_id)
+            except Exception as exc:
+                self._logger.error(
+                    "multipost_failed",
+                    vacancy_id=new_vacancy_id,
+                    error=str(exc),
+                )
             steps.append("multipost")
 
             # Done
@@ -491,6 +499,13 @@ class JobProcessor:
             new_id = await self.vacancy_service.duplicate_vacancy(
                 complete, channels=self.config.multipost_channels,
             )
+
+            if not new_id:
+                raise ApiError(
+                    status_code=400,
+                    message="Duplicate vacancy failed - invalid ID",
+                    endpoint="/vacancy/addVacancy",
+                )
 
         self._job_logger.log_vacancy_step(
             vacancy.id, "duplicate", "success", {"new_vacancy_id": new_id},

@@ -6,7 +6,7 @@ api:
   # office_id loaded from environment variable BRIGHT_OFFICE_ID
   api_version: "1.0"
   api_lang: "en"
-  rate_limit: 2.0  # requests per second (750 vacancies ~ 31 min)
+  rate_limit: 1  # requests per second (750 vacancies ~ 31 min)
   max_retries: 3
   timeout: 30
   backoff_base: 2.0
@@ -14,7 +14,7 @@ api:
   max_backoff: 60.0
 
 processor:
-  batch_size: 50
+  batch_size: 5
   close_reason: 3  # closereason_id: 3 = "Dubbele vacature"
   multipost_channels:
     - 1  # Website
