@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 class ApiConfig(BaseModel):
     """API connection configuration"""
 
-    base_url: str = "https://match.b-bright.be/api"
+    base_url: "https://match.b-bright.be/backend/index.php/api/"
     access_token: str = ""
     api_version: str = "1.0"
     api_lang: str = "en"

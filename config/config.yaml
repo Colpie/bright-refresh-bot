@@ -1,7 +1,7 @@
 # Bright Staffing Job Refresh Bot Configuration
 
 api:
-  base_url: "https://match.b-bright.be/api"
+  base_url: "https://match.b-bright.be/backend/index.php/api/"
   # access_token loaded from environment variable BRIGHT_API_ACCESS_TOKEN
   # office_id loaded from environment variable BRIGHT_OFFICE_ID
   api_version: "1.0"
