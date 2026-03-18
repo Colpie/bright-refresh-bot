@@ -286,11 +286,10 @@ class JobProcessor:
                     return result
 
         # Process all vacancies concurrently with semaphore limiting batch size
-        tasks = [process_with_semaphore(v, i) for i, v in enumerate(vacancies)]
-        results = []
-
-        for task in tasks:
-            results.append(await task)
+        results = await asyncio.gather(
+            *[process_with_semaphore(v, i) for i, v in enumerate(vacancies)],
+            return_exceptions=False,
+        )
 
         successful = sum(1 for r in results if r.success)
         failed = sum(1 for r in results if not r.success)
@@ -340,9 +339,6 @@ class JobProcessor:
 
         self._job_logger.log_vacancy_start(vacancy.id, vacancy.title)
 
-        print("SOURCE VACANCY ID:", vacancy.id)
-        print("SOURCE VACANCY TITLE:", vacancy.title)
-
         try:
             # 1 - Fetch complete data
             complete = await self._step_fetch(vacancy)
@@ -354,7 +350,6 @@ class JobProcessor:
 
             # 3 - Duplicate
             new_vacancy_id = await self._step_duplicate(vacancy, complete)
-            print("NEW VACANCY ID AFTER DUPLICATE:", new_vacancy_id)
             steps.append("duplicate")
 
             await self.state_manager.update_vacancy_status(
@@ -362,18 +357,14 @@ class JobProcessor:
             )
 
             # 4 - Open new vacancy
-            print("OPENING NEW VACANCY ID:", new_vacancy_id)
             await self._step_open(new_vacancy_id)
             steps.append("open")
 
             # 5 - Update province (API ignores province_id during creation)
-            print("UPDATING PROVINCE FOR VACANCY ID:", new_vacancy_id)
             await self._step_update_province(new_vacancy_id, complete)
             steps.append("province")
 
             # 6 - Close original (BEFORE multipost for safe rollback)
-            print("CLOSING ORIGINAL VACANCY ID:", vacancy.id)
-            print("NEW VACANCY STILL IN FLOW:", new_vacancy_id)
             closed = await self._step_close(vacancy)
             steps.append("close")
 
@@ -685,8 +676,6 @@ class JobProcessor:
         closereason_id = self.config.close_reason
         if isinstance(closereason_id, str):
             closereason_id = int(closereason_id) if closereason_id.isdigit() else 3
-        print("STEP CLOSE - VACANCY ID:", vacancy.id)
-        print("STEP CLOSE - CLOSEREASON ID:", closereason_id)
 
         if self.dry_run:
             self._job_logger.log_dry_run(
