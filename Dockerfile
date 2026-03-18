@@ -54,5 +54,4 @@ ENV CONFIG_PATH=/app/config/config.yaml
 # Default command: Railway cron triggers this once per week
 # Use --limit 1 for testing, remove when ready for production
 ENTRYPOINT ["python", "-m", "src.main"]
-#CMD ["run"]
-CMD ["run", "--limit", "5"]
+CMD ["run"]
