@@ -175,14 +175,14 @@ class BrightStaffingClient:
         url = f"{self._base_url}{endpoint}"
 
         print("REQUEST ENDPOINT:", endpoint)
-            print("REQUEST URL:", url)
-            print("REQUEST PARAMS:", params)
-            print("REQUEST FORM DATA:", self._build_form_data(params))
+        print("REQUEST URL:", url)
+        print("REQUEST PARAMS:", params)
+        print("REQUEST FORM DATA:", self._build_form_data(params))
 
-            response = await self._client.post(url, data=self._build_form_data(params))
+        response = await self._client.post(url, data=self._build_form_data(params))
 
-            print("RESPONSE STATUS:", response.status_code)
-            print("RESPONSE TEXT:", response.text)
+        print("RESPONSE STATUS:", response.status_code)
+        print("RESPONSE TEXT:", response.text)
 
 
         # --- dry-run shortcut ---
