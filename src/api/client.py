@@ -174,17 +174,6 @@ class BrightStaffingClient:
         params = params or {}
         url = f"{self._base_url}{endpoint}"
 
-        print("REQUEST ENDPOINT:", endpoint)
-        print("REQUEST URL:", url)
-        print("REQUEST PARAMS:", params)
-        print("REQUEST FORM DATA:", self._build_form_data(params))
-
-        response = await self._client.post(url, data=self._build_form_data(params))
-
-        print("RESPONSE STATUS:", response.status_code)
-        print("RESPONSE TEXT:", response.text)
-
-
         # --- dry-run shortcut ---
         if self.dry_run:
             self._logger.info("dry_run_request", endpoint=endpoint, params=list(params.keys()))
@@ -274,12 +263,10 @@ class BrightStaffingClient:
         params: dict[str, Any] = {"office_id": office_id}
         if extra_data:
             params["extraData"] = "true"
+        # Fetch with HTML tags so descriptions preserve original formatting
         params["as_html"] = "1"
         if page is not None:
             params["page"] = page
-
-        print("GET_VACANCIES_BY_OFFICE params:", params)
-
         return await self.request("/vacancy/getVacanciesByOffice", params)
 
     async def add_vacancy(self, vacancy_data: dict) -> ApiResponse:
