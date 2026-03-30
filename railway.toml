@@ -1,6 +1,7 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
+root = "."
 
 [deploy]
 # Saturday 07:30 UTC = 08:30 Brussels (winter CET)
