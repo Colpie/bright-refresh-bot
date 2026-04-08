@@ -66,28 +66,40 @@ class VacancyService:
                 office_open = 0
                 office_total = 0
                 while True:
-                    response = await self.client.get_vacancies_by_office(
-                        oid, extra_data=True, page=page,
-                    )
+                    if page == 1:
+                        response = await self.client.get_vacancies_by_office(
+                            oid, extra_data=True,
+                        )
+                    else:
+                        response = await self.client.get_vacancies_by_office(
+                            oid, extra_data=True, page=page,
+                        )
+
                     if not response.success:
                         self._logger.error(
                             "get_vacancies_failed", office_id=oid,
                             page=page, error=response.data,
                         )
                         break
+
                     raw_list = _extract_list(response.data, "vacancies")
                     if not raw_list:
                         break  # No more pages
+
                     office_total += len(raw_list)
+
                     for item in raw_list:
                         v = Vacancy.from_api(item)
                         if v.status == VacancyStatus.OPEN:
                             all_vacancies.append(v)
                             office_open += 1
+
                     # If we got fewer than 100 items, this was the last page
                     if len(raw_list) < 100:
                         break
+
                     page += 1
+
                 self._logger.info(
                     "office_vacancies_fetched",
                     office_id=oid,

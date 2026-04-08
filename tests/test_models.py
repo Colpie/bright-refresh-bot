@@ -115,8 +115,8 @@ class TestVacancy:
         assert "id" not in api_dict
         assert "status" not in api_dict
 
-    def test_to_api_dict_preserves_raw_data(self):
-        """Test that raw_data fields are preserved"""
+    def test_to_api_dict_filters_unknown_raw_data_fields(self):
+        """Test that unknown raw_data fields are not sent to the API"""
         vacancy = Vacancy(
             id="V001",
             title="Developer",
@@ -125,8 +125,8 @@ class TestVacancy:
 
         api_dict = vacancy.to_api_dict()
 
-        assert api_dict["custom_field"] == "custom_value"
-        assert api_dict["another"] == 123
+        assert "custom_field" not in api_dict
+        assert "another" not in api_dict
 
 
 class TestVacancyDocument:
