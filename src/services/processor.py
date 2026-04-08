@@ -326,13 +326,12 @@ class JobProcessor:
           3. duplicate   - Create new vacancy (vacancy_id=0)
           4. open        - Open the new vacancy
           5. province    - Update province_id (non-fatal)
-          6. multipost   - Post to Website + VDAB
-          7. close       - Best-effort close of the ORIGINAL vacancy
+          6. close       - Close the ORIGINAL vacancy
+          7. multipost   - Post to Website + VDAB (only after close succeeds)
 
-        Closing the original vacancy is intentionally non-blocking.
-        If close fails, the new vacancy remains active and multiposting
-        is not rolled back. The failure is logged for manual follow-up
-        or later retry instead of blocking VDAB publication.
+        Close is done BEFORE multipost so that if close fails we can
+        cleanly roll back by closing the new vacancy.  This guarantees
+        requirement #5: no duplicate active jobs.
         """
         start = time.monotonic()
         steps: list[str] = []
@@ -365,7 +364,35 @@ class JobProcessor:
             await self._step_update_province(new_vacancy_id, complete)
             steps.append("province")
 
-            # 6 - Multipost first so close failures never block publication
+            # 6 - Close original (BEFORE multipost for safe rollback)
+            closed = await self._step_close(vacancy)
+            steps.append("close")
+
+            if not closed:
+                # Close failed -> rollback: close the NEW vacancy to prevent duplicates
+                await self._step_rollback_new(new_vacancy_id, vacancy.id)
+                steps.append("rollback")
+
+                duration_ms = self._elapsed_ms(start)
+                await self.state_manager.update_vacancy_status(
+                    self._run_id, vacancy.id, "failed",
+                    new_vacancy_id=new_vacancy_id,
+                    error_message="Close original failed - rolled back new vacancy",
+                )
+                self._job_logger.log_vacancy_complete(vacancy.id, new_vacancy_id, "failed", duration_ms)
+
+                return ProcessingResult(
+                    original_vacancy_id=vacancy.id,
+                    success=False,
+                    new_vacancy_id=new_vacancy_id,
+                    error_message="Close original failed - rolled back new vacancy",
+                    duration_ms=duration_ms,
+                    steps_completed=steps,
+                )
+
+            await self.state_manager.update_vacancy_status(self._run_id, vacancy.id, "closed")
+
+            # 7 - Multipost to Website + VDAB (only after close succeeded)
             try:
                 await self._step_multipost(new_vacancy_id)
             except Exception as exc:
@@ -376,40 +403,15 @@ class JobProcessor:
                 )
             steps.append("multipost")
 
-            # 7 - Close original (best effort, non-blocking)
-            closed = await self._step_close(vacancy)
-            steps.append("close")
-
-            completion_warning: Optional[str] = None
-            if closed:
-                await self.state_manager.update_vacancy_status(self._run_id, vacancy.id, "closed")
-            else:
-                completion_warning = (
-                    f"Original vacancy {vacancy.id} could not be closed after creating "
-                    f"and publishing new vacancy {new_vacancy_id}."
-                )
-                self._logger.error(
-                    "close_original_failed_non_blocking",
-                    original_id=vacancy.id,
-                    new_vacancy_id=new_vacancy_id,
-                    message=completion_warning,
-                )
-
             # Done
             duration_ms = self._elapsed_ms(start)
-            await self.state_manager.update_vacancy_status(
-                self._run_id,
-                vacancy.id,
-                "completed",
-                error_message=completion_warning,
-            )
+            await self.state_manager.update_vacancy_status(self._run_id, vacancy.id, "completed")
             self._job_logger.log_vacancy_complete(vacancy.id, new_vacancy_id, "success", duration_ms)
 
             return ProcessingResult(
                 original_vacancy_id=vacancy.id,
                 success=True,
                 new_vacancy_id=new_vacancy_id,
-                error_message=completion_warning,
                 duration_ms=duration_ms,
                 steps_completed=steps,
             )
@@ -536,6 +538,13 @@ class JobProcessor:
 
         The API silently ignores province_id during creation (vacancy_id=0).
         We must send a separate update (vacancy_id=<new_id>) after opening.
+
+        IMPORTANT:
+        addVacancy updates appear to clear some dropdown fields when they are
+        omitted from the update payload. Sending only province_id caused
+        group_id ("selectiegroep") to disappear in the UI, so we resend
+        group_id together with province_id.
+
         Failures here are non-fatal - they don't prevent closing the original.
         """
         province_id = complete.vacancy.raw_data.get("province_id")
@@ -562,10 +571,15 @@ class JobProcessor:
                 "province_id": province_int,
             }
 
+            group_id = raw.get("group_id")
+            if group_id and str(group_id) != "0":
+                update_payload["group_id"] = int(group_id)
+
             self._logger.info(
                 "province_update_attempt",
                 vacancy_id=new_vacancy_id,
                 province_id=province_int,
+                group_id=update_payload.get("group_id"),
             )
 
             response = await self.vacancy_service.client.add_vacancy(update_payload)

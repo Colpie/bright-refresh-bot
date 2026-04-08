@@ -386,8 +386,10 @@ class VacancyService:
 
             # Step 4: Update province AFTER opening the vacancy.
             # The API ignores province_id during creation (vacancy_id=0).
-            # Use MINIMAL payload (required fields only + province_id)
-            # to avoid any field validation issues.
+            # IMPORTANT: addVacancy updates appear to clear some dropdown fields
+            # when they are omitted from the update payload. Sending only
+            # province_id caused group_id ("selectiegroep") to disappear in the UI,
+            # so we resend group_id together with province_id.
             # Wrapped in try/except so failures don't prevent closing.
             province_id = complete.vacancy.raw_data.get("province_id")
             if province_id and str(province_id) != "0":
@@ -406,10 +408,15 @@ class VacancyService:
                         "province_id": province_int,
                     }
 
+                    group_id = raw.get("group_id")
+                    if group_id and str(group_id) != "0":
+                        update_payload["group_id"] = int(group_id)
+
                     self._logger.info(
                         "province_update_attempt",
                         vacancy_id=new_id,
                         province_id=province_int,
+                        group_id=update_payload.get("group_id"),
                         payload=update_payload,
                     )
 
