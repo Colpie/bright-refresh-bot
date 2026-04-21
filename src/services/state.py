@@ -87,11 +87,25 @@ CREATE TABLE IF NOT EXISTS processing_records (
     UNIQUE(run_id, original_vacancy_id)
 );
 
+CREATE TABLE IF NOT EXISTS processed_vacancies (
+    original_vacancy_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    new_vacancy_id TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_records_run_status
 ON processing_records(run_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_records_vacancy
 ON processing_records(original_vacancy_id);
+
+CREATE INDEX IF NOT EXISTS idx_processed_run
+ON processed_vacancies(run_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_single_running_run
+ON processing_runs(status)
+WHERE status = 'running';
 """
 
 
@@ -239,13 +253,31 @@ class StateManager:
 
     async def start_run(self, run_id: str, total_jobs: int) -> None:
         db = await self._get_db()
-        await db.execute(
-            "INSERT INTO processing_runs (run_id, started_at, total_jobs, status) "
-            "VALUES (?, ?, ?, 'running')",
-            (run_id, datetime.utcnow().isoformat(), total_jobs),
-        )
-        await db.commit()
-        self._logger.info("run_started", run_id=run_id, total_jobs=total_jobs)
+        try:
+            await db.execute(
+                "INSERT INTO processing_runs (run_id, started_at, total_jobs, status) "
+                "VALUES (?, ?, ?, 'running')",
+                (run_id, datetime.utcnow().isoformat(), total_jobs),
+            )
+            await db.commit()
+            self._logger.info("run_started", run_id=run_id, total_jobs=total_jobs)
+        except aiosqlite.IntegrityError as exc:
+            cursor = await db.execute(
+                "SELECT run_id, started_at FROM processing_runs WHERE status = 'running' LIMIT 1"
+            )
+            row = await cursor.fetchone()
+            active_run_id = row[0] if row else "unknown"
+            active_started_at = row[1] if row else None
+
+            self._logger.warning(
+                "run_start_blocked_existing_running_run",
+                run_id=run_id,
+                active_run_id=active_run_id,
+                active_started_at=active_started_at,
+            )
+            raise RuntimeError(
+                f"Another run is already active (run_id={active_run_id}, started_at={active_started_at})."
+            ) from exc
 
     async def complete_run(
         self, run_id: str, successful: int, failed: int, skipped: int,
@@ -283,6 +315,46 @@ class StateManager:
             (run_id, vacancy_id),
         )
         await db.commit()
+
+    async def is_original_vacancy_processed(self, vacancy_id: str) -> bool:
+        db = await self._get_db()
+        cursor = await db.execute(
+            "SELECT 1 FROM processed_vacancies WHERE original_vacancy_id = ? LIMIT 1",
+            (vacancy_id,),
+        )
+        row = await cursor.fetchone()
+        return row is not None
+
+
+    async def mark_original_vacancy_processed(
+        self,
+        original_vacancy_id: str,
+        run_id: str,
+        new_vacancy_id: Optional[str] = None,
+    ) -> None:
+        db = await self._get_db()
+        await db.execute(
+            "INSERT OR IGNORE INTO processed_vacancies "
+            "(original_vacancy_id, run_id, new_vacancy_id, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                original_vacancy_id,
+                run_id,
+                new_vacancy_id,
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        await db.commit()
+
+
+    async def get_active_run(self) -> Optional[RunSummary]:
+        db = await self._get_db()
+        cursor = await db.execute(
+            f"SELECT {_SUMMARY_COLUMNS} FROM processing_runs "
+            f"WHERE status = 'running' ORDER BY started_at DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        return _summary_from_row(row) if row else None
 
     async def update_vacancy_status(
         self,

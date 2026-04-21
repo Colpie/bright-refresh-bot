@@ -154,7 +154,6 @@ class JobProcessor:
 
         self._logger.info("fetching_open_vacancies", run_id=self._run_id)
 
-        # Handle "all" offices: discover all offices, then fetch vacancies
         if self.office_id and self.office_id.strip().lower() == "all":
             offices = await self.vacancy_service.get_all_offices()
             office_ids = ",".join(o.get("uid", "") for o in offices if o.get("uid"))
@@ -176,7 +175,36 @@ class JobProcessor:
             self._logger.warning("no_vacancies_found", run_id=self._run_id)
             return BatchResult(total=0, successful=0, failed=0, skipped=0)
 
-        # Apply limit if specified
+        filtered_vacancies: list[Vacancy] = []
+        skipped_already_processed = 0
+
+        for vacancy in vacancies:
+            already_processed = await self.state_manager.is_original_vacancy_processed(vacancy.id)
+            if already_processed:
+                skipped_already_processed += 1
+                self._logger.warning(
+                    "skipping_already_processed_vacancy",
+                    run_id=self._run_id,
+                    vacancy_id=vacancy.id,
+                )
+                continue
+            filtered_vacancies.append(vacancy)
+
+        vacancies = filtered_vacancies
+
+        if not vacancies:
+            self._logger.warning(
+                "no_vacancies_left_after_filtering",
+                run_id=self._run_id,
+                skipped_already_processed=skipped_already_processed,
+            )
+            return BatchResult(
+                total=0,
+                successful=0,
+                failed=0,
+                skipped=skipped_already_processed,
+            )
+
         if self._limit and self._limit < len(vacancies):
             self._logger.info(
                 "applying_limit",
@@ -211,13 +239,26 @@ class JobProcessor:
 
         self._logger.info("resuming_run", run_id=self._run_id, pending=len(pending_ids))
 
+        if self.office_id and self.office_id.strip().lower() == "all":
+            offices = await self.vacancy_service.get_all_offices()
+            office_ids = ",".join(o.get("uid", "") for o in offices if o.get("uid"))
+            all_open = await self.vacancy_service.get_all_open_vacancies(office_id=office_ids)
+        else:
+            all_open = await self.vacancy_service.get_all_open_vacancies(office_id=self.office_id)
+
+        vacancy_map = {vacancy.id: vacancy for vacancy in all_open}
+
         vacancies: list[Vacancy] = []
         for vid in pending_ids:
-            try:
-                complete = await self.vacancy_service.get_complete_vacancy(vid)
-                vacancies.append(complete.vacancy)
-            except ApiError as exc:
-                self._logger.warning("resume_fetch_failed", vacancy_id=vid, error=str(exc))
+            vacancy = vacancy_map.get(vid)
+            if vacancy:
+                vacancies.append(vacancy)
+            else:
+                self._logger.warning(
+                    "resume_vacancy_not_found_in_open_list",
+                    run_id=self._run_id,
+                    vacancy_id=vid,
+                )
 
         return await self._process_vacancies(vacancies)
 
@@ -353,7 +394,16 @@ class JobProcessor:
             steps.append("duplicate")
 
             await self.state_manager.update_vacancy_status(
-                self._run_id, vacancy.id, "duplicated", new_vacancy_id=new_vacancy_id,
+                self._run_id,
+                vacancy.id,
+                "duplicated",
+                new_vacancy_id=new_vacancy_id,
+            )
+
+            await self.state_manager.mark_original_vacancy_processed(
+                original_vacancy_id=vacancy.id,
+                run_id=self._run_id,
+                new_vacancy_id=new_vacancy_id,
             )
 
             # 4 - Open new vacancy

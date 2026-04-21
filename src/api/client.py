@@ -162,6 +162,7 @@ class BrightStaffingClient:
         params: Optional[dict] = None,
         *,
         _retry: int = 0,
+        retryable: bool = True,
     ) -> ApiResponse:
         """
         Make an authenticated POST request.
@@ -223,7 +224,7 @@ class BrightStaffingClient:
                 self._logger.error("auth_failure", endpoint=endpoint)
                 raise error
 
-            if error.is_retryable and _retry < self.config.max_retries:
+            if retryable and error.is_retryable and _retry < self.config.max_retries:
                 await self._circuit_breaker.record_failure()
                 wait = self._backoff_seconds(_retry)
                 self._logger.warning(
@@ -234,18 +235,18 @@ class BrightStaffingClient:
                     wait_s=wait,
                 )
                 await asyncio.sleep(wait)
-                return await self.request(endpoint, params, _retry=_retry + 1)
+                return await self.request(endpoint, params, _retry=_retry + 1, retryable=retryable)
 
             await self._circuit_breaker.record_failure()
             raise error
 
         except httpx.TimeoutException as exc:
-            if _retry < self.config.max_retries:
+            if retryable and _retry < self.config.max_retries:
                 await self._circuit_breaker.record_failure()
                 wait = self._backoff_seconds(_retry)
                 self._logger.warning("timeout_retry", endpoint=endpoint, attempt=_retry + 1)
                 await asyncio.sleep(wait)
-                return await self.request(endpoint, params, _retry=_retry + 1)
+                return await self.request(endpoint, params, _retry=_retry + 1, retryable=retryable)
 
             raise ApiError(status_code=408, message=str(exc), endpoint=endpoint)
 
@@ -294,7 +295,11 @@ class BrightStaffingClient:
 
         # API expects: {"vacancy": {vacancy_data}}
         # The _build_form_data method will JSON-encode the inner dict
-        response = await self.request("/vacancy/addVacancy", {"vacancy": vacancy_data})
+        response = await self.request(
+            "/vacancy/addVacancy",
+            {"vacancy": vacancy_data},
+            retryable=False,
+        )
 
         # Log full response for debugging
         self._logger.info(
@@ -328,10 +333,14 @@ class BrightStaffingClient:
         }
         if extra_info:
             params["extra_info"] = extra_info
-        return await self.request("/vacancy/closeVacancy", params)
+        return await self.request("/vacancy/closeVacancy", params, retryable=False)
 
     async def open_vacancy(self, vacancy_id: str) -> ApiResponse:
-        return await self.request("/vacancy/openVacancy", {"vacancy_id": vacancy_id})
+        return await self.request(
+            "/vacancy/openVacancy",
+            {"vacancy_id": vacancy_id},
+            retryable=False,
+        )
 
     async def get_vacancy_documents(self, vacancy_id: str) -> ApiResponse:
         return await self.request("/vacancy/getVacancyDocuments", {"vacancy_id": vacancy_id})
@@ -421,6 +430,7 @@ class BrightStaffingClient:
                     "jobboard_id": str(jobboard_id),
                 },
                 cookies=self._web_session_cookies,
+                timeout=30.0,
             )
 
             self._logger.debug(

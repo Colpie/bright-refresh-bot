@@ -47,24 +47,19 @@ class VacancyService:
         self,
         office_id: Optional[str] = None,
     ) -> list[Vacancy]:
-        """Fetch all open vacancies with full field data (extraData=true).
+        """Fetch all open vacancies with full field data (extraData=true)."""
 
-        Args:
-            office_id: Single office ID, comma-separated IDs ("1,5,7"),
-                      or "all" to discover and fetch from every office.
-
-        Uses extraData to get salary, competences, studies, work_country_iso,
-        and other fields not included in the basic response.
-        """
         office_ids = self._resolve_office_ids(office_id)
 
         if office_ids:
             all_vacancies: list[Vacancy] = []
+            seen_ids: set[str] = set()
+
             for oid in office_ids:
-                # Paginate: API returns max 100 items per page
                 page = 1
                 office_open = 0
                 office_total = 0
+
                 while True:
                     if page == 1:
                         response = await self.client.get_vacancies_by_office(
@@ -77,24 +72,36 @@ class VacancyService:
 
                     if not response.success:
                         self._logger.error(
-                            "get_vacancies_failed", office_id=oid,
-                            page=page, error=response.data,
+                            "get_vacancies_failed",
+                            office_id=oid,
+                            page=page,
+                            error=response.data,
                         )
                         break
 
                     raw_list = _extract_list(response.data, "vacancies")
                     if not raw_list:
-                        break  # No more pages
+                        break
 
                     office_total += len(raw_list)
 
                     for item in raw_list:
                         v = Vacancy.from_api(item)
-                        if v.status == VacancyStatus.OPEN:
-                            all_vacancies.append(v)
-                            office_open += 1
+                        if v.status != VacancyStatus.OPEN:
+                            continue
 
-                    # If we got fewer than 100 items, this was the last page
+                        if v.id in seen_ids:
+                            self._logger.warning(
+                                "duplicate_vacancy_seen_across_offices",
+                                vacancy_id=v.id,
+                                office_id=oid,
+                            )
+                            continue
+
+                        seen_ids.add(v.id)
+                        all_vacancies.append(v)
+                        office_open += 1
+
                     if len(raw_list) < 100:
                         break
 
@@ -107,6 +114,7 @@ class VacancyService:
                     total_in_response=office_total,
                     open_count=office_open,
                 )
+
             self._logger.info(
                 "vacancies_fetched",
                 offices=len(office_ids),
@@ -114,21 +122,35 @@ class VacancyService:
                 open_count=len(all_vacancies),
             )
             return all_vacancies
-        else:
-            response = await self.client.get_vacancies({"extraData": "true"})
-            if not response.success:
-                self._logger.error("get_vacancies_failed", error=response.data)
-                return []
-            raw_list = _extract_list(response.data, "vacancies")
-            vacancies = [
-                Vacancy.from_api(item)
-                for item in raw_list
-                if item.get("status", "").lower() == "open"
-            ]
-            self._logger.info(
-                "vacancies_fetched", total=len(raw_list), open_count=len(vacancies),
-            )
-            return vacancies
+
+        response = await self.client.get_vacancies({"extraData": "true"})
+        if not response.success:
+            self._logger.error("get_vacancies_failed", error=response.data)
+            return []
+
+        raw_list = _extract_list(response.data, "vacancies")
+
+        vacancies: list[Vacancy] = []
+        seen_ids: set[str] = set()
+
+        for item in raw_list:
+            if item.get("status", "").lower() != "open":
+                continue
+
+            v = Vacancy.from_api(item)
+            if v.id in seen_ids:
+                self._logger.warning("duplicate_vacancy_seen", vacancy_id=v.id)
+                continue
+
+            seen_ids.add(v.id)
+            vacancies.append(v)
+
+        self._logger.info(
+            "vacancies_fetched",
+            total=len(raw_list),
+            open_count=len(vacancies),
+        )
+        return vacancies
 
     async def get_all_offices(self) -> list[dict]:
         """Discover all available offices."""
