@@ -63,7 +63,7 @@ class ApiConfig(BaseModel):
 class ProcessorConfig(BaseModel):
     """Job processing configuration"""
 
-    batch_size: int = 50
+    batch_size: int = 100
     close_reason: int = 3  # closereason_id: 3 = "Dubbele vacature"
     multipost_channels: list[int] = Field(default_factory=lambda: [1, 3])  # 1=Website, 3=Vdab
     dry_run: bool = False
