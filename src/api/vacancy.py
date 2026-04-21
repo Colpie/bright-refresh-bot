@@ -91,7 +91,7 @@ class VacancyService:
                             continue
 
                         if v.id in seen_ids:
-                            self._logger.warning(
+                            self._logger.debug(
                                 "duplicate_vacancy_seen_across_offices",
                                 vacancy_id=v.id,
                                 office_id=oid,
