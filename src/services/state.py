@@ -115,19 +115,18 @@ WHERE status = 'running';
 
 
 def _parse_optional_dt(value: Optional[str]) -> Optional[datetime]:
-    """Parse an ISO timestamp string or return None."""
     if not value:
         return None
     return datetime.fromisoformat(value)
 
 
-def _record_from_row(row: tuple) -> ProcessingRecord:
-    """Convert a SELECT row into a ProcessingRecord.
+_RECORD_COLUMNS = (
+    "original_vacancy_id, run_id, status, new_vacancy_id, "
+    "error_message, duplicated_at, closed_at, completed_at, created_at"
+)
 
-    Expected column order:
-        original_vacancy_id, run_id, status, new_vacancy_id,
-        error_message, duplicated_at, closed_at, completed_at, created_at
-    """
+
+def _record_from_row(row: tuple) -> ProcessingRecord:
     return ProcessingRecord(
         original_vacancy_id=row[0],
         run_id=row[1],
@@ -141,19 +140,13 @@ def _record_from_row(row: tuple) -> ProcessingRecord:
     )
 
 
-_RECORD_COLUMNS = (
-    "original_vacancy_id, run_id, status, new_vacancy_id, "
-    "error_message, duplicated_at, closed_at, completed_at, created_at"
+_SUMMARY_COLUMNS = (
+    "run_id, started_at, completed_at, total_jobs, "
+    "successful, failed, skipped, status"
 )
 
 
 def _summary_from_row(row: tuple) -> RunSummary:
-    """Convert a SELECT row into a RunSummary.
-
-    Expected column order:
-        run_id, started_at, completed_at, total_jobs,
-        successful, failed, skipped, status
-    """
     return RunSummary(
         run_id=row[0],
         started_at=datetime.fromisoformat(row[1]),
@@ -164,12 +157,6 @@ def _summary_from_row(row: tuple) -> RunSummary:
         skipped=row[6],
         status=row[7],
     )
-
-
-_SUMMARY_COLUMNS = (
-    "run_id, started_at, completed_at, total_jobs, "
-    "successful, failed, skipped, status"
-)
 
 
 # --------------------------------------------------------------------------- #
@@ -194,10 +181,8 @@ class StateManager:
     """
     Manages processing state in SQLite database.
 
-    Uses a persistent connection opened via ``connect()`` and closed via
-    ``close()``.  Supports ``async with`` for automatic lifecycle management.
-    Falls back to per-call connections when no persistent connection exists
-    (e.g. in tests).
+    Uses a persistent connection opened via connect() and closed via close().
+    Supports async with for automatic lifecycle management.
     """
 
     def __init__(self, db_path: str):
@@ -211,16 +196,21 @@ class StateManager:
     def _ensure_db_directory(self) -> None:
         if self.db_path == ":memory:":
             return
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+
+        parent = Path(self.db_path).parent
+
+        if str(parent):
+            parent.mkdir(parents=True, exist_ok=True)
 
     async def connect(self) -> None:
-        """Open a persistent database connection."""
         if self._conn is not None:
             return
+
         self._conn = await aiosqlite.connect(self.db_path)
+        await self._conn.execute("PRAGMA foreign_keys = ON")
+        await self._conn.commit()
 
     async def close(self) -> None:
-        """Close the persistent database connection."""
         if self._conn is not None:
             await self._conn.close()
             self._conn = None
@@ -233,39 +223,53 @@ class StateManager:
         await self.close()
 
     async def _get_db(self) -> aiosqlite.Connection:
-        """Return the persistent connection, or open a one-shot one."""
-        if self._conn is not None:
-            return self._conn
-        # Fallback for callers that didn't call connect() (tests, scripts)
-        self._conn = await aiosqlite.connect(self.db_path)
+        if self._conn is None:
+            await self.connect()
+
+        if self._conn is None:
+            raise RuntimeError("Database connection could not be opened.")
+
         return self._conn
 
     # -- schema ------------------------------------------------------------ #
 
     async def initialize(self) -> None:
-        """Create tables and indices if they don't exist."""
         db = await self._get_db()
         await db.executescript(_SCHEMA_SQL)
         await db.commit()
+
         self._logger.info("database_initialized", db_path=self.db_path)
 
     # -- run operations ---------------------------------------------------- #
 
     async def start_run(self, run_id: str, total_jobs: int) -> None:
         db = await self._get_db()
+
         try:
             await db.execute(
-                "INSERT INTO processing_runs (run_id, started_at, total_jobs, status) "
+                "INSERT INTO processing_runs "
+                "(run_id, started_at, total_jobs, status) "
                 "VALUES (?, ?, ?, 'running')",
                 (run_id, datetime.utcnow().isoformat(), total_jobs),
             )
             await db.commit()
-            self._logger.info("run_started", run_id=run_id, total_jobs=total_jobs)
+
+            self._logger.info(
+                "run_started",
+                run_id=run_id,
+                total_jobs=total_jobs,
+            )
+
         except aiosqlite.IntegrityError as exc:
             cursor = await db.execute(
-                "SELECT run_id, started_at FROM processing_runs WHERE status = 'running' LIMIT 1"
+                "SELECT run_id, started_at "
+                "FROM processing_runs "
+                "WHERE status = 'running' "
+                "LIMIT 1"
             )
             row = await cursor.fetchone()
+            await cursor.close()
+
             active_run_id = row[0] if row else "unknown"
             active_started_at = row[1] if row else None
 
@@ -275,42 +279,71 @@ class StateManager:
                 active_run_id=active_run_id,
                 active_started_at=active_started_at,
             )
+
             raise RuntimeError(
-                f"Another run is already active (run_id={active_run_id}, started_at={active_started_at})."
+                "Another run is already active "
+                f"(run_id={active_run_id}, started_at={active_started_at})."
             ) from exc
 
     async def complete_run(
-        self, run_id: str, successful: int, failed: int, skipped: int,
+        self,
+        run_id: str,
+        successful: int,
+        failed: int,
+        skipped: int,
     ) -> None:
         status = "completed" if failed == 0 else "completed_with_errors"
         db = await self._get_db()
+
         await db.execute(
             "UPDATE processing_runs "
             "SET completed_at = ?, successful = ?, failed = ?, skipped = ?, status = ? "
             "WHERE run_id = ?",
-            (datetime.utcnow().isoformat(), successful, failed, skipped, status, run_id),
+            (
+                datetime.utcnow().isoformat(),
+                successful,
+                failed,
+                skipped,
+                status,
+                run_id,
+            ),
         )
         await db.commit()
+
         self._logger.info(
-            "run_completed", run_id=run_id,
-            successful=successful, failed=failed, skipped=skipped, status=status,
+            "run_completed",
+            run_id=run_id,
+            successful=successful,
+            failed=failed,
+            skipped=skipped,
+            status=status,
         )
 
     async def fail_run(self, run_id: str, error_message: str) -> None:
         db = await self._get_db()
+
         await db.execute(
-            "UPDATE processing_runs SET completed_at = ?, status = 'failed' WHERE run_id = ?",
+            "UPDATE processing_runs "
+            "SET completed_at = ?, status = 'failed' "
+            "WHERE run_id = ?",
             (datetime.utcnow().isoformat(), run_id),
         )
         await db.commit()
-        self._logger.error("run_failed", run_id=run_id, error=error_message)
+
+        self._logger.error(
+            "run_failed",
+            run_id=run_id,
+            error=error_message,
+        )
 
     # -- record operations ------------------------------------------------- #
 
     async def add_vacancy_record(self, run_id: str, vacancy_id: str) -> None:
         db = await self._get_db()
+
         await db.execute(
-            "INSERT OR IGNORE INTO processing_records (run_id, original_vacancy_id, status) "
+            "INSERT OR IGNORE INTO processing_records "
+            "(run_id, original_vacancy_id, status) "
             "VALUES (?, ?, 'pending')",
             (run_id, vacancy_id),
         )
@@ -318,13 +351,18 @@ class StateManager:
 
     async def is_original_vacancy_processed(self, vacancy_id: str) -> bool:
         db = await self._get_db()
+
         cursor = await db.execute(
-            "SELECT 1 FROM processed_vacancies WHERE original_vacancy_id = ? LIMIT 1",
+            "SELECT 1 "
+            "FROM processed_vacancies "
+            "WHERE original_vacancy_id = ? "
+            "LIMIT 1",
             (vacancy_id,),
         )
         row = await cursor.fetchone()
-        return row is not None
+        await cursor.close()
 
+        return row is not None
 
     async def mark_original_vacancy_processed(
         self,
@@ -333,6 +371,7 @@ class StateManager:
         new_vacancy_id: Optional[str] = None,
     ) -> None:
         db = await self._get_db()
+
         await db.execute(
             "INSERT OR IGNORE INTO processed_vacancies "
             "(original_vacancy_id, run_id, new_vacancy_id, created_at) "
@@ -346,14 +385,19 @@ class StateManager:
         )
         await db.commit()
 
-
     async def get_active_run(self) -> Optional[RunSummary]:
         db = await self._get_db()
+
         cursor = await db.execute(
-            f"SELECT {_SUMMARY_COLUMNS} FROM processing_runs "
-            f"WHERE status = 'running' ORDER BY started_at DESC LIMIT 1"
+            f"SELECT {_SUMMARY_COLUMNS} "
+            "FROM processing_runs "
+            "WHERE status = 'running' "
+            "ORDER BY started_at DESC "
+            "LIMIT 1"
         )
         row = await cursor.fetchone()
+        await cursor.close()
+
         return _summary_from_row(row) if row else None
 
     async def update_vacancy_status(
@@ -367,7 +411,6 @@ class StateManager:
         now = datetime.utcnow().isoformat()
         extra_cols = _STATUS_EXTRA_COLS.get(status, [])
 
-        # Build SET clause dynamically
         set_parts = ["status = ?"]
         params: list = [status]
 
@@ -378,6 +421,7 @@ class StateManager:
             "completed_at": now,
             "error_message": error_message,
         }
+
         for col in extra_cols:
             set_parts.append(f"{col} = ?")
             params.append(col_values[col])
@@ -385,8 +429,10 @@ class StateManager:
         params.extend([run_id, vacancy_id])
 
         db = await self._get_db()
+
         await db.execute(
-            f"UPDATE processing_records SET {', '.join(set_parts)} "
+            f"UPDATE processing_records "
+            f"SET {', '.join(set_parts)} "
             f"WHERE run_id = ? AND original_vacancy_id = ?",
             params,
         )
@@ -396,64 +442,110 @@ class StateManager:
 
     async def get_pending_vacancies(self, run_id: str) -> list[str]:
         db = await self._get_db()
+
         cursor = await db.execute(
-            "SELECT original_vacancy_id FROM processing_records "
+            "SELECT original_vacancy_id "
+            "FROM processing_records "
             "WHERE run_id = ? AND status IN ('pending', 'duplicated') "
             "ORDER BY created_at",
             (run_id,),
         )
         rows = await cursor.fetchall()
+        await cursor.close()
+
         return [row[0] for row in rows]
 
     async def get_run_summary(self, run_id: str) -> Optional[RunSummary]:
         db = await self._get_db()
+
         cursor = await db.execute(
-            f"SELECT {_SUMMARY_COLUMNS} FROM processing_runs WHERE run_id = ?",
+            f"SELECT {_SUMMARY_COLUMNS} "
+            "FROM processing_runs "
+            "WHERE run_id = ?",
             (run_id,),
         )
         row = await cursor.fetchone()
+        await cursor.close()
+
         return _summary_from_row(row) if row else None
 
     async def get_processing_record(
-        self, run_id: str, vacancy_id: str,
+        self,
+        run_id: str,
+        vacancy_id: str,
     ) -> Optional[ProcessingRecord]:
         db = await self._get_db()
+
         cursor = await db.execute(
-            f"SELECT {_RECORD_COLUMNS} FROM processing_records "
-            f"WHERE run_id = ? AND original_vacancy_id = ?",
+            f"SELECT {_RECORD_COLUMNS} "
+            "FROM processing_records "
+            "WHERE run_id = ? AND original_vacancy_id = ?",
             (run_id, vacancy_id),
         )
         row = await cursor.fetchone()
+        await cursor.close()
+
         return _record_from_row(row) if row else None
 
     async def get_failed_records(self, run_id: str) -> list[ProcessingRecord]:
         db = await self._get_db()
+
         cursor = await db.execute(
-            f"SELECT {_RECORD_COLUMNS} FROM processing_records "
-            f"WHERE run_id = ? AND status = 'failed' ORDER BY created_at",
+            f"SELECT {_RECORD_COLUMNS} "
+            "FROM processing_records "
+            "WHERE run_id = ? AND status = 'failed' "
+            "ORDER BY created_at",
             (run_id,),
         )
-        return [_record_from_row(row) for row in await cursor.fetchall()]
+        rows = await cursor.fetchall()
+        await cursor.close()
+
+        return [_record_from_row(row) for row in rows]
+
+    async def get_run_records(self, run_id: str) -> list[ProcessingRecord]:
+        db = await self._get_db()
+
+        cursor = await db.execute(
+            f"SELECT {_RECORD_COLUMNS} "
+            "FROM processing_records "
+            "WHERE run_id = ? "
+            "ORDER BY created_at",
+            (run_id,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+
+        return [_record_from_row(row) for row in rows]
 
     async def get_rollback_records(self, run_id: str) -> list[ProcessingRecord]:
-        """Get records that have actions to rollback (duplicated, closed, completed, failed,
-        or any record that created a new vacancy)."""
         db = await self._get_db()
+
         cursor = await db.execute(
-            f"SELECT {_RECORD_COLUMNS} FROM processing_records "
-            f"WHERE run_id = ? AND ("
-            f"  status IN ('duplicated', 'closed', 'completed', 'failed') "
-            f"  OR new_vacancy_id IS NOT NULL"
-            f") ORDER BY created_at",
+            f"SELECT {_RECORD_COLUMNS} "
+            "FROM processing_records "
+            "WHERE run_id = ? AND ("
+            "status IN ('duplicated', 'closed', 'completed', 'failed') "
+            "OR new_vacancy_id IS NOT NULL"
+            ") "
+            "ORDER BY created_at",
             (run_id,),
         )
-        return [_record_from_row(row) for row in await cursor.fetchall()]
+        rows = await cursor.fetchall()
+        await cursor.close()
+
+        return [_record_from_row(row) for row in rows]
 
     async def get_recent_runs(self, limit: int = 10) -> list[RunSummary]:
         db = await self._get_db()
+
         cursor = await db.execute(
-            f"SELECT {_SUMMARY_COLUMNS} FROM processing_runs "
-            f"ORDER BY started_at DESC LIMIT ?",
+            f"SELECT {_SUMMARY_COLUMNS} "
+            "FROM processing_runs "
+            "ORDER BY started_at DESC "
+            "LIMIT ?",
             (limit,),
         )
-        return [_summary_from_row(row) for row in await cursor.fetchall()]
+        rows = await cursor.fetchall()
+        await cursor.close()
+
+        return [_summary_from_row(row) for row in rows]
