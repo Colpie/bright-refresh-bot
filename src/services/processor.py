@@ -419,23 +419,50 @@ class JobProcessor:
             steps.append("close")
 
             if not closed:
-                # Close failed -> rollback: close the NEW vacancy to prevent duplicates
-                await self._step_rollback_new(new_vacancy_id, vacancy.id)
-                steps.append("rollback")
+                # SAFETY FIRST:
+                # We sluiten de nieuwe vacature NIET meer bij een fout op het sluiten
+                # van de originele vacature.
+                #
+                # Reden:
+                # De API kan False/error teruggeven terwijl de originele vacature
+                # server-side toch al gesloten is.
+                # Als we dan ook de nieuwe vacature sluiten, verdwijnt de vacature
+                # volledig uit de open-vacaturelijst.
+                #
+                # Liever tijdelijk een dubbele vacature dan een verdwenen vacature.
+
+                steps.append("close_failed_new_left_open")
 
                 duration_ms = self._elapsed_ms(start)
+                error_message = "Close original failed - new vacancy left open for safety"
+
                 await self.state_manager.update_vacancy_status(
-                    self._run_id, vacancy.id, "failed",
+                    self._run_id,
+                    vacancy.id,
+                    "failed",
                     new_vacancy_id=new_vacancy_id,
-                    error_message="Close original failed - rolled back new vacancy",
+                    error_message=error_message,
                 )
-                self._job_logger.log_vacancy_complete(vacancy.id, new_vacancy_id, "failed", duration_ms)
+
+                self._logger.warning(
+                    "close_original_failed_new_left_open",
+                    original_vacancy_id=vacancy.id,
+                    new_vacancy_id=new_vacancy_id,
+                    reason="Avoiding data loss; manual reconciliation required",
+                )
+
+                self._job_logger.log_vacancy_complete(
+                    vacancy.id,
+                    new_vacancy_id,
+                    "failed",
+                    duration_ms,
+                )
 
                 return ProcessingResult(
                     original_vacancy_id=vacancy.id,
                     success=False,
                     new_vacancy_id=new_vacancy_id,
-                    error_message="Close original failed - rolled back new vacancy",
+                    error_message=error_message,
                     duration_ms=duration_ms,
                     steps_completed=steps,
                 )
