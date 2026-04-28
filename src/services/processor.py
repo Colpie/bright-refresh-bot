@@ -853,6 +853,51 @@ class JobProcessor:
                 reason="Both original and new vacancy remain open - manual intervention needed",
             )
 
+    async def retry_failed_closures(self, run_id: str) -> None:
+        """Retry closing original vacancies that previously failed."""
+
+        failed_records = await self.state_manager.get_failed_records(run_id)
+
+        close_failed_records = [
+            record for record in failed_records
+            if record.error_message == "Close original failed - new vacancy left open for safety"
+            and record.new_vacancy_id
+        ]
+
+        if not close_failed_records:
+            return
+
+        self._logger.info(
+            "retry_failed_closures_start",
+            total=len(close_failed_records),
+        )
+
+        for record in close_failed_records:
+            closed = await self.vacancy_service.close_vacancy(
+                record.original_vacancy_id,
+                self.config.close_reason,
+                extra_info="Retry after cron run",
+            )
+
+            if closed:
+                await self.state_manager.update_vacancy_status(
+                    run_id,
+                    record.original_vacancy_id,
+                    "recovered",
+                    new_vacancy_id=record.new_vacancy_id,
+                    error_message=None,
+                )
+
+                self._logger.info(
+                    "retry_close_success",
+                    vacancy_id=record.original_vacancy_id,
+                )
+            else:
+                self._logger.warning(
+                    "retry_close_failed",
+                    vacancy_id=record.original_vacancy_id,
+                )
+                
     # -- helpers ------------------------------------------------------------- #
 
     @staticmethod

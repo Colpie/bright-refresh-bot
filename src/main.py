@@ -331,6 +331,15 @@ async def _run_processor(config: Config, resume_run_id: Optional[str], limit: Op
                 limit=limit,
             )
 
+            # Retry close failures
+            await processor.retry_failed_closures(processor.run_id)
+
+            reporter = Reporter(state_manager, config.alerts)
+            report = await reporter.generate_report(
+                processor.run_id,
+                dry_run=config.processor.dry_run,
+            )
+
             reporter = Reporter(state_manager, config.alerts)
             report = await reporter.generate_report(
                 processor.run_id,
