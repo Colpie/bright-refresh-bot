@@ -14,7 +14,7 @@ api:
   max_backoff: 60.0
 
 processor:
-  batch_size: 5
+  batch_size: 1
   close_reason: 3  # closereason_id: 3 = "Dubbele vacature"
   multipost_channels:
     - 1  # Website
