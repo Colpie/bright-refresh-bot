@@ -333,7 +333,7 @@ class BrightStaffingClient:
         }
         if extra_info:
             params["extra_info"] = extra_info
-        return await self.request("/vacancy/closeVacancy", params, retryable=False)
+        return await self.request("/vacancy/closeVacancy", params, retryable=True)
 
     async def open_vacancy(self, vacancy_id: str) -> ApiResponse:
         return await self.request(
