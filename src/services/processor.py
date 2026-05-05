@@ -763,6 +763,8 @@ class JobProcessor:
         """Remove the original vacancy from VDAB via multiposting before closing it."""
         self._job_logger.log_vacancy_step(vacancy.id, "vdab_unpost", "in_progress")
 
+        # VDAB jobboard_id from Bright multiposting request:
+        # /multiposting/deleteVacancy -> jobboard_id=3
         vdab_jobboard_id = 3
 
         if self.dry_run:
@@ -797,10 +799,11 @@ class JobProcessor:
                 )
 
             if not ok:
-                self._logger.error(
+                self._logger.warning(
                     "vdab_unpost_failed_after_retry",
                     vacancy_id=vacancy.id,
                     jobboard_id=vdab_jobboard_id,
+                    reason="Continuing with close anyway",
                 )
                 self._job_logger.log_vacancy_step(
                     vacancy.id,
@@ -813,12 +816,13 @@ class JobProcessor:
         except CircuitBreakerOpen:
             raise
         except Exception as exc:
-            self._logger.error(
-                "vdab_unpost_error",
+            self._logger.warning(
+                "vdab_unpost_error_continuing",
                 vacancy_id=vacancy.id,
                 jobboard_id=vdab_jobboard_id,
                 error=str(exc),
                 error_type=type(exc).__name__,
+                reason="Continuing with close anyway",
             )
             self._job_logger.log_vacancy_step(
                 vacancy.id,
