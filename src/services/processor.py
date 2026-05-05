@@ -783,8 +783,22 @@ class JobProcessor:
             )
 
             if not ok:
+                self._logger.warning(
+                    "vdab_unpost_retry_after_relogin",
+                    vacancy_id=vacancy.id,
+                    jobboard_id=vdab_jobboard_id,
+                )
+
+                await self._ensure_web_session()
+
+                ok = await self.vacancy_service.delete_multiposting_vacancy(
+                    vacancy.id,
+                    vdab_jobboard_id,
+                )
+
+            if not ok:
                 self._logger.error(
-                    "vdab_unpost_failed",
+                    "vdab_unpost_failed_after_retry",
                     vacancy_id=vacancy.id,
                     jobboard_id=vdab_jobboard_id,
                 )
@@ -792,7 +806,7 @@ class JobProcessor:
                     vacancy.id,
                     "vdab_unpost",
                     "failed",
-                    {"error": "deleteVacancy returned false"},
+                    {"error": "deleteVacancy returned false after retry"},
                 )
                 return False
 
