@@ -479,11 +479,6 @@ class BrightStaffingClient:
         vacancy_id: str,
         jobboard_id: int,
     ) -> ApiResponse:
-        """Remove/close a vacancy from a specific multiposting jobboard.
-
-        Used to close the old vacancy publication on VDAB before closing the
-        vacancy itself in Bright.
-        """
         if self.dry_run:
             self._logger.info(
                 "dry_run_delete_multiposting",
@@ -523,16 +518,24 @@ class BrightStaffingClient:
             except Exception:
                 data = response.text
 
-            self._logger.info(
+            self._logger.warning(
                 "delete_multiposting_response",
                 vacancy_id=vacancy_id,
                 jobboard_id=jobboard_id,
                 status_code=response.status_code,
-                data=str(data)[:500],
+                data=str(data)[:1000],
             )
 
+            success = response.status_code == 200
+
+            if isinstance(data, dict):
+                if data.get("status") == "error":
+                    success = False
+                elif data.get("status") == "success":
+                    success = True
+
             return ApiResponse(
-                success=response.status_code == 200,
+                success=success,
                 data=data,
                 status_code=response.status_code,
             )

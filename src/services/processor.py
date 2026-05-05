@@ -475,7 +475,7 @@ class JobProcessor:
                     steps_completed=steps,
                 )
             await self.state_manager.update_vacancy_status(self._run_id, vacancy.id, "closed")
-            
+
             # 7 - Multipost to Website + VDAB (only after close succeeded)
             try:
                 await self._step_multipost(new_vacancy_id)
