@@ -474,6 +474,76 @@ class BrightStaffingClient:
                 endpoint="/multiposting/addVacancy",
             )
 
+    async def delete_multiposting_vacancy(
+        self,
+        vacancy_id: str,
+        jobboard_id: int,
+    ) -> ApiResponse:
+        """Remove/close a vacancy from a specific multiposting jobboard.
+
+        Used to close the old vacancy publication on VDAB before closing the
+        vacancy itself in Bright.
+        """
+        if self.dry_run:
+            self._logger.info(
+                "dry_run_delete_multiposting",
+                vacancy_id=vacancy_id,
+                jobboard_id=jobboard_id,
+            )
+            return ApiResponse(success=True, data={"mock": True}, status_code=200)
+
+        if not self._web_session_cookies:
+            raise ApiError(
+                status_code=401,
+                message="No web session. Call web_login() first.",
+                endpoint="/multiposting/deleteVacancy",
+            )
+
+        await self._rate_limiter.acquire()
+
+        if not self._client:
+            raise RuntimeError("Client not initialised. Use 'async with' context manager.")
+
+        url = f"{self._web_base_url}/index.php/multiposting/deleteVacancy"
+
+        try:
+            response = await self._client.post(
+                url,
+                data={
+                    "vacancy_id": str(vacancy_id),
+                    "jobboard_id": str(jobboard_id),
+                },
+                cookies=self._web_session_cookies,
+                headers={"X-Requested-With": "XMLHttpRequest"},
+                timeout=30.0,
+            )
+
+            try:
+                data = response.json()
+            except Exception:
+                data = response.text
+
+            self._logger.info(
+                "delete_multiposting_response",
+                vacancy_id=vacancy_id,
+                jobboard_id=jobboard_id,
+                status_code=response.status_code,
+                data=str(data)[:500],
+            )
+
+            return ApiResponse(
+                success=response.status_code == 200,
+                data=data,
+                status_code=response.status_code,
+            )
+
+        except httpx.HTTPError as exc:
+            raise ApiError(
+                status_code=0,
+                message=str(exc),
+                endpoint="/multiposting/deleteVacancy",
+            )
+
     async def web_login(self, username: str, password: str) -> bool:
         """Log in to the BrightStaffing web app to get session cookies.
 

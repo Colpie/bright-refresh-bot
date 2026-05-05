@@ -367,8 +367,9 @@ class JobProcessor:
           3. duplicate   - Create new vacancy (vacancy_id=0)
           4. open        - Open the new vacancy
           5. province    - Update province_id (non-fatal)
-          6. close       - Close the ORIGINAL vacancy
-          7. multipost   - Post to Website + VDAB (only after close succeeds)
+          6. vdab_unpost - Remove ORIGINAL vacancy from VDAB
+          7. close       - Close the ORIGINAL vacancy
+          8. multipost   - Post new vacancy to Website + VDAB
 
         Close is done BEFORE multipost so that if close fails we can
         cleanly roll back by closing the new vacancy.  This guarantees
@@ -415,22 +416,36 @@ class JobProcessor:
             steps.append("province")
 
             # 6 - Close original (BEFORE multipost for safe rollback)
+            # 6 - Remove original vacancy from VDAB before closing
+            offline = await self._step_offline(vacancy)
+            steps.append("vdab_unpost")
+
+            if not offline:
+                duration_ms = self._elapsed_ms(start)
+                error_message = "VDAB unpost failed - close skipped for safety"
+
+                await self.state_manager.update_vacancy_status(
+                    self._run_id,
+                    vacancy.id,
+                    "failed",
+                    new_vacancy_id=new_vacancy_id,
+                    error_message=error_message,
+                )
+
+                return ProcessingResult(
+                    original_vacancy_id=vacancy.id,
+                    success=False,
+                    new_vacancy_id=new_vacancy_id,
+                    error_message=error_message,
+                    duration_ms=duration_ms,
+                    steps_completed=steps,
+                )
+
+            # 7 - Close original after VDAB unpost
             closed = await self._step_close(vacancy)
             steps.append("close")
 
             if not closed:
-                # SAFETY FIRST:
-                # We sluiten de nieuwe vacature NIET meer bij een fout op het sluiten
-                # van de originele vacature.
-                #
-                # Reden:
-                # De API kan False/error teruggeven terwijl de originele vacature
-                # server-side toch al gesloten is.
-                # Als we dan ook de nieuwe vacature sluiten, verdwijnt de vacature
-                # volledig uit de open-vacaturelijst.
-                #
-                # Liever tijdelijk een dubbele vacature dan een verdwenen vacature.
-
                 steps.append("close_failed_new_left_open")
 
                 duration_ms = self._elapsed_ms(start)
@@ -442,13 +457,6 @@ class JobProcessor:
                     "failed",
                     new_vacancy_id=new_vacancy_id,
                     error_message=error_message,
-                )
-
-                self._logger.warning(
-                    "close_original_failed_new_left_open",
-                    original_vacancy_id=vacancy.id,
-                    new_vacancy_id=new_vacancy_id,
-                    reason="Avoiding data loss; manual reconciliation required",
                 )
 
                 self._job_logger.log_vacancy_complete(
@@ -466,9 +474,8 @@ class JobProcessor:
                     duration_ms=duration_ms,
                     steps_completed=steps,
                 )
-
             await self.state_manager.update_vacancy_status(self._run_id, vacancy.id, "closed")
-
+            
             # 7 - Multipost to Website + VDAB (only after close succeeded)
             try:
                 await self._step_multipost(new_vacancy_id)
@@ -751,6 +758,64 @@ class JobProcessor:
                     jobboard_id=jobboard_id,
                     error=str(exc),
                 )
+
+    async def _step_offline(self, vacancy: Vacancy) -> bool:
+        """Remove the original vacancy from VDAB via multiposting before closing it."""
+        self._job_logger.log_vacancy_step(vacancy.id, "vdab_unpost", "in_progress")
+
+        vdab_jobboard_id = 3
+
+        if self.dry_run:
+            self._job_logger.log_dry_run(
+                "delete_multiposting_vacancy",
+                {
+                    "vacancy_id": vacancy.id,
+                    "jobboard_id": vdab_jobboard_id,
+                },
+            )
+            self._job_logger.log_vacancy_step(vacancy.id, "vdab_unpost", "success")
+            return True
+
+        try:
+            ok = await self.vacancy_service.delete_multiposting_vacancy(
+                vacancy.id,
+                vdab_jobboard_id,
+            )
+
+            if not ok:
+                self._logger.error(
+                    "vdab_unpost_failed",
+                    vacancy_id=vacancy.id,
+                    jobboard_id=vdab_jobboard_id,
+                )
+                self._job_logger.log_vacancy_step(
+                    vacancy.id,
+                    "vdab_unpost",
+                    "failed",
+                    {"error": "deleteVacancy returned false"},
+                )
+                return False
+
+        except CircuitBreakerOpen:
+            raise
+        except Exception as exc:
+            self._logger.error(
+                "vdab_unpost_error",
+                vacancy_id=vacancy.id,
+                jobboard_id=vdab_jobboard_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            self._job_logger.log_vacancy_step(
+                vacancy.id,
+                "vdab_unpost",
+                "failed",
+                {"error": str(exc)},
+            )
+            return False
+
+        self._job_logger.log_vacancy_step(vacancy.id, "vdab_unpost", "success")
+        return True
 
     async def _step_close(self, vacancy: Vacancy) -> bool:
         """Close the original vacancy.

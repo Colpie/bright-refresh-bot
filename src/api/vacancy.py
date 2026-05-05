@@ -378,6 +378,43 @@ class VacancyService:
         )
         return True
 
+    async def delete_multiposting_vacancy(
+        self,
+        vacancy_id: str,
+        jobboard_id: int,
+    ) -> bool:
+        """Remove/close a vacancy from a specific multiposting jobboard."""
+        try:
+            response = await self.client.delete_multiposting_vacancy(
+                vacancy_id,
+                jobboard_id,
+            )
+        except ApiError as exc:
+            self._logger.error(
+                "delete_multiposting_api_error",
+                vacancy_id=vacancy_id,
+                jobboard_id=jobboard_id,
+                status_code=exc.status_code,
+                error=str(exc),
+            )
+            return False
+
+        if not response.success:
+            self._logger.error(
+                "delete_multiposting_failed",
+                vacancy_id=vacancy_id,
+                jobboard_id=jobboard_id,
+                error=response.data,
+            )
+            return False
+
+        self._logger.info(
+            "multiposting_deleted",
+            vacancy_id=vacancy_id,
+            jobboard_id=jobboard_id,
+        )
+        return True
+
     # ------------------------------------------------------------------ #
     #  Full refresh workflow
     # ------------------------------------------------------------------ #
