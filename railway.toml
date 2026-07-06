@@ -4,9 +4,19 @@ dockerfilePath = "Dockerfile"
 root = "."
 
 [deploy]
-# Saturday 07:30 UTC = 08:30 Brussels (winter CET)
-# In summer (CEST, after last Sunday of March): this becomes 09:30 Brussels
-# To keep 08:30 in summer, change to "30 6 * * 6"
+# Saturday 07:37 UTC = 08:37 Brussels (winter CET)
+# In summer (CEST, after last Sunday of March): this becomes 09:37 Brussels
+# To keep ~08:30 in summer instead, change to "37 6 * * 6"
+#
+# Offset 7 minutes past the half-hour on purpose: Railway's native cron
+# scheduler is known to occasionally skip triggers on "round" times
+# (:00, :30, top of the hour) due to load on their scheduler at those
+# peak moments. An odd minute is more reliable.
+#
+# HEALTHCHECK_PING_URL (see Optional Settings in README) gives a
+# dead-man's-switch: if this cron silently fails to trigger some week,
+# you get notified because no ping arrives, instead of only finding out
+# weeks later.
 startCommand = "python -m src.main run"
-cronSchedule = "30 8 * * 6"
+cronSchedule = "37 8 * * 6"
 restartPolicyType = "NEVER"

@@ -9,11 +9,13 @@ Usage:
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 from typing import Optional
 
 import click
+import httpx
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -84,6 +86,26 @@ def _load_and_validate_config(
         backup_count=config.logging.backup_count,
     )
     return config
+
+
+def _ping_heartbeat(success: bool) -> None:
+    """Dead-man's-switch: ping an external monitor so a *missed* cron
+    trigger is detectable too (not just a failed run).
+
+    Set HEALTHCHECK_PING_URL to a healthchecks.io or cronitor.io ping
+    URL. Convention: GET the URL on success, GET "{URL}/fail" on failure.
+    If the env var isn't set, this is a no-op.
+    """
+    base_url = os.environ.get("HEALTHCHECK_PING_URL")
+    if not base_url:
+        return
+
+    url = base_url if success else f"{base_url.rstrip('/')}/fail"
+    try:
+        httpx.get(url, timeout=10)
+    except Exception as e:
+        # Never let monitoring itself break the actual job
+        console.print(f"[yellow]Warning: heartbeat ping failed: {e}[/yellow]")
 
 
 async def _init_state(config: Config) -> Optional[StateManager]:
@@ -296,7 +318,9 @@ def run(dry_run: bool, config_path: Optional[str], resume_run_id: Optional[str],
         result = asyncio.run(_run_processor(config, resume_run_id, limit))
         _print_result_summary(result)
         if result.failed > 0:
+            _ping_heartbeat(success=False)
             sys.exit(1)
+        _ping_heartbeat(success=True)
     except KeyboardInterrupt:
         console.print("\n[yellow]Processing interrupted by user[/yellow]")
         sys.exit(130)
@@ -304,6 +328,7 @@ def run(dry_run: bool, config_path: Optional[str], resume_run_id: Optional[str],
         console.print(f"[red]Error: {e}[/red]")
         if verbose:
             console.print_exception()
+        _ping_heartbeat(success=False)
         sys.exit(1)
 
 
