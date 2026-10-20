@@ -1,6 +1,7 @@
 """Main job processing logic"""
 
 import asyncio
+import hashlib
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -10,9 +11,10 @@ from uuid import uuid4
 from ..api.client import BrightStaffingClient, CircuitBreakerOpen
 from ..api.models import ApiError, Vacancy, CompleteVacancy
 from ..api.vacancy import VacancyService
-from ..config import ProcessorConfig
+from ..config import ProcessorConfig, PortalConfig
 from ..utils.logging import get_logger, JobLogger
 from .state import StateManager
+from .portal import bright_origin, flush_portal_outbox
 
 
 # --------------------------------------------------------------------------- #
@@ -64,12 +66,14 @@ class JobProcessor:
         state_manager: StateManager,
         dry_run: bool = False,
         office_id: Optional[str] = None,
+        portal_config: Optional[PortalConfig] = None,
     ):
         self.client = client
         self.config = config
         self.state_manager = state_manager
         self.dry_run = dry_run
         self.office_id = office_id
+        self.portal_config = portal_config
 
         self.vacancy_service = VacancyService(client)
         self._logger = get_logger("job_processor")
@@ -478,7 +482,15 @@ class JobProcessor:
 
             # 7 - Multipost to Website + VDAB (only after close succeeded)
             try:
-                await self._step_multipost(new_vacancy_id)
+                publication_response = await self._step_multipost(new_vacancy_id)
+                if publication_response is not None and not self.dry_run:
+                    origin = bright_origin(self.client.config.base_url)
+                    await self.state_manager.queue_portal_refresh(
+                        origin, int(vacancy.id), int(new_vacancy_id), publication_response,
+                    )
+                    if self.portal_config:
+                        event_id = hashlib.sha256(f"{origin}|{int(vacancy.id)}|{int(new_vacancy_id)}".encode()).hexdigest()
+                        await flush_portal_outbox(self.state_manager, self.portal_config, event_id=event_id)
             except Exception as exc:
                 self._logger.error(
                     "multipost_failed",
@@ -687,7 +699,7 @@ class JobProcessor:
                 error_type=type(exc).__name__,
             )
 
-    async def _step_multipost(self, new_vacancy_id: str) -> None:
+    async def _step_multipost(self, new_vacancy_id: str) -> object | None:
         """Trigger multiposting to configured channels (Website, VDAB).
 
         Uses the internal web endpoint /multiposting/addVacancy which
@@ -711,6 +723,7 @@ class JobProcessor:
             )
             return
 
+        publication_response = None
         channel_names = {1: "Website", 3: "VDAB"}
 
         for jobboard_id in self.config.multipost_channels:
@@ -734,6 +747,8 @@ class JobProcessor:
                         )
 
                 if response.success:
+                    if jobboard_id == 3:
+                        publication_response = response.data
                     self._logger.info(
                         "multipost_success",
                         vacancy_id=new_vacancy_id,
@@ -758,6 +773,8 @@ class JobProcessor:
                     jobboard_id=jobboard_id,
                     error=str(exc),
                 )
+
+        return publication_response
 
     async def _step_offline(self, vacancy: Vacancy) -> bool:
         """Remove the original vacancy from VDAB via multiposting before closing it."""

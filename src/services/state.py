@@ -61,6 +61,18 @@ class RunSummary:
 # --------------------------------------------------------------------------- #
 
 _SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS portal_refresh_outbox (
+    event_id TEXT PRIMARY KEY,
+    bright_origin TEXT NOT NULL,
+    original_bright_id INTEGER NOT NULL,
+    new_bright_id INTEGER NOT NULL,
+    publication_response TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS processing_runs (
     run_id TEXT PRIMARY KEY,
     started_at TIMESTAMP NOT NULL,
@@ -549,3 +561,35 @@ class StateManager:
         await cursor.close()
 
         return [_summary_from_row(row) for row in rows]
+
+    async def queue_portal_refresh(self, origin: str, original: int, new: int, response: object) -> None:
+        import hashlib
+        import json
+        event_id = hashlib.sha256(f"{origin}|{original}|{new}".encode()).hexdigest()
+        db = await self._get_db()
+        await db.execute(
+            "INSERT OR IGNORE INTO portal_refresh_outbox (event_id, bright_origin, original_bright_id, new_bright_id, publication_response) VALUES (?, ?, ?, ?, ?)",
+            (event_id, origin, original, new, json.dumps(response)),
+        )
+        await db.commit()
+
+    async def pending_portal_refreshes(self, event_id: Optional[str] = None) -> list[dict]:
+        db = await self._get_db()
+        query = "SELECT * FROM portal_refresh_outbox WHERE status != 'applied'"
+        args = ()
+        if event_id:
+            query += " AND event_id = ?"
+            args = (event_id,)
+        cursor = await db.execute(query + " ORDER BY created_at, rowid", args)
+        columns = [item[0] for item in cursor.description]
+        rows = [dict(zip(columns, row)) for row in await cursor.fetchall()]
+        await cursor.close()
+        return rows
+
+    async def record_portal_refresh(self, event_id: str, status: str, error: Optional[str] = None) -> None:
+        db = await self._get_db()
+        await db.execute(
+            "UPDATE portal_refresh_outbox SET status = ?, attempts = attempts + 1, last_error = ? WHERE event_id = ?",
+            (status, error, event_id),
+        )
+        await db.commit()

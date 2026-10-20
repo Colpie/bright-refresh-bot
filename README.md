@@ -207,3 +207,7 @@ For each open vacancy:
 ## License
 
 Private - For Match Staffing agency use only.
+
+## Match Portal publication handoff
+
+An optional authenticated, durable handoff preserves the old-to-new Bright vacancy chain and can register confirmed VDAB publication numbers. It is disabled until configured. See [setup and limitations](docs/portal-refresh-integration.md); the actual VDAB response field must be verified before automatic number matching can be enabled.

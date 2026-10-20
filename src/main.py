@@ -23,6 +23,7 @@ from rich.panel import Panel
 from .config import load_config, validate_config, Config
 from .api.client import BrightStaffingClient
 from .services.state import StateManager, RunSummary
+from .services.portal import flush_portal_outbox
 from .services.processor import JobProcessor
 from .services.reporter import Reporter
 from .services.rollback import RollbackService
@@ -348,13 +349,20 @@ async def _run_processor(config: Config, resume_run_id: Optional[str], limit: Op
                 state_manager=state_manager,
                 dry_run=config.processor.dry_run,
                 office_id=config.api.office_id,
+                portal_config=config.portal,
             )
+
+            if not config.processor.dry_run:
+                await flush_portal_outbox(state_manager, config.portal)
 
             result = await processor.run(
                 run_id=resume_run_id,
                 resume=bool(resume_run_id),
                 limit=limit,
             )
+
+            if not config.processor.dry_run:
+                await flush_portal_outbox(state_manager, config.portal)
 
             # Retry close failures
             await processor.retry_failed_closures(processor.run_id)
@@ -668,6 +676,21 @@ async def _run_rollback(
             reopen_closed=reopen_closed,
             close_duplicates=close_duplicates,
         )
+
+
+@cli.command("portal-sync")
+@click.option("--config", "config_path", type=click.Path(exists=True))
+def portal_sync(config_path: Optional[str]):
+    """Retry saved portal handoffs without refreshing or publishing vacancies."""
+    config = load_config(config_path)
+    async def send():
+        state = StateManager(config.state.db_path)
+        await state.initialize()
+        try:
+            return await flush_portal_outbox(state, config.portal, retry_review=True)
+        finally:
+            await state.close()
+    console.print(f"Portal mappings confirmed: {asyncio.run(send())}")
 
 
 # --------------------------------------------------------------------------- #

@@ -85,6 +85,14 @@ class ProcessorConfig(BaseModel):
         return v
 
 
+class PortalConfig(BaseModel):
+    """Optional, authenticated publication handoff. Disabled until configured."""
+
+    endpoint: str = ""
+    token: str = Field(default="", repr=False)
+    vdab_json_path: str = ""  # Set only after verifying the VDAB publication response.
+
+
 class ScheduleConfig(BaseModel):
     """Scheduling configuration"""
 
@@ -164,6 +172,7 @@ class Config(BaseModel):
 
     api: ApiConfig = Field(default_factory=ApiConfig)
     processor: ProcessorConfig = Field(default_factory=ProcessorConfig)
+    portal: PortalConfig = Field(default_factory=PortalConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     alerts: AlertConfig = Field(default_factory=AlertConfig)
     state: StateConfig = Field(default_factory=StateConfig)
@@ -175,6 +184,9 @@ class Config(BaseModel):
 # --------------------------------------------------------------------------- #
 
 _ENV_OVERRIDES: dict[str, tuple[str, type]] = {
+    "PORTAL_REFRESH_ENDPOINT": ("portal.endpoint", str),
+    "PORTAL_REFRESH_TOKEN": ("portal.token", str),
+    "PORTAL_VDAB_JSON_PATH": ("portal.vdab_json_path", str),
     "BRIGHT_API_BASE_URL": ("api.base_url", str),
     "BRIGHT_API_ACCESS_TOKEN": ("api.access_token", str),
     "BRIGHT_API_VERSION": ("api.api_version", str),
