@@ -211,3 +211,32 @@ Private - For Match Staffing agency use only.
 ## Match Portal publication handoff
 
 An optional authenticated, durable handoff preserves the old-to-new Bright vacancy chain and can register confirmed VDAB publication numbers. It is disabled until configured. See [setup and limitations](docs/portal-refresh-integration.md); the actual VDAB response field must be verified before automatic number matching can be enabled.
+
+### One explicitly selected vacancy
+
+```bash
+python -m src.main run --vacancy-id 93833
+```
+
+This is a real refresh: it creates a replacement, unposts/closes the original and
+publishes the replacement. It fails before processing if that exact ID is not in
+the open source selection. It never substitutes another vacancy. Do not combine
+this option with `--resume` or a limit other than 1. Old unrelated portal-outbox
+items are not flushed during this targeted run; its own new event is still sent.
+
+Use a retained `STATE_DB_PATH` and `LOG_DIR` for the test. The VDAB publication
+response is preserved in `portal_refresh_outbox.publication_response` in SQLite;
+a dry-run does not produce a real VDAB publication response or number.
+
+
+### Byner-identiteit behouden bij vernieuwen
+
+De Bright-office-lijst bevat `info_internal` niet, ook niet met `extraData=true`.
+Voor een echte refresh leest de tool daarom eerst de ingelogde `vacancy/detail`-route,
+controleert de teruggegeven Bright-ID en neemt `info_internal` ongewijzigd mee naar
+de nieuwe vacature. Zo blijft de interne Byner-ID/het Byner-vacaturenummer beschikbaar
+voor het automatisch koppelen van VDAB-sollicitaties in het portaal.
+Bij een mislukte detailcontrole stopt die vacature vóór aanmaken of sluiten.
+Hiervoor zijn de bestaande `BRIGHT_WEB_USERNAME` en `BRIGHT_WEB_PASSWORD` nodig.
+Een lege interne verwijzing bij een oude vacature wordt behouden; er wordt geen
+Byner-identiteit afgeleid uit de titel en er worden geen oude vacatures bijgewerkt.

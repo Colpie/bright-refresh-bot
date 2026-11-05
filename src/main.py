@@ -293,10 +293,13 @@ def cli():
 @click.option("--dry-run", is_flag=True, help="Run without making actual API calls")
 @click.option("--config", "config_path", type=click.Path(exists=True), help="Path to config file")
 @click.option("--resume", "resume_run_id", help="Resume a previous run by ID")
-@click.option("--limit", type=int, help="Process only first N vacancies (for testing)")
+@click.option("--limit", type=click.IntRange(min=1), help="Process only first N vacancies (for testing)")
+@click.option("--vacancy-id", type=click.IntRange(min=1), help="Refresh only this exact open Bright vacancy")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
-def run(dry_run: bool, config_path: Optional[str], resume_run_id: Optional[str], limit: Optional[int], verbose: bool):
+def run(dry_run: bool, config_path: Optional[str], resume_run_id: Optional[str], limit: Optional[int], verbose: bool, vacancy_id: Optional[int]):
     """Run the job refresh process"""
+    if vacancy_id is not None and (resume_run_id is not None or limit not in (None, 1)):
+        raise click.UsageError("--vacancy-id cannot combine with --resume or a limit other than 1")
     _print_banner()
     config = _load_and_validate_config(config_path, dry_run=dry_run, verbose=verbose)
     _print_config_summary(config)
@@ -316,7 +319,7 @@ def run(dry_run: bool, config_path: Optional[str], resume_run_id: Optional[str],
         console.print("[green]Pre-flight checks passed[/green]\n")
 
     try:
-        result = asyncio.run(_run_processor(config, resume_run_id, limit))
+        result = asyncio.run(_run_processor(config, resume_run_id, limit, str(vacancy_id) if vacancy_id is not None else None))
         _print_result_summary(result)
         if result.failed > 0:
             _ping_heartbeat(success=False)
@@ -333,7 +336,7 @@ def run(dry_run: bool, config_path: Optional[str], resume_run_id: Optional[str],
         sys.exit(1)
 
 
-async def _run_processor(config: Config, resume_run_id: Optional[str], limit: Optional[int] = None):
+async def _run_processor(config: Config, resume_run_id: Optional[str], limit: Optional[int] = None, vacancy_id: Optional[str] = None):
     state_manager = StateManager(config.state.db_path)
     await state_manager.initialize()
 
@@ -352,16 +355,17 @@ async def _run_processor(config: Config, resume_run_id: Optional[str], limit: Op
                 portal_config=config.portal,
             )
 
-            if not config.processor.dry_run:
+            if not config.processor.dry_run and vacancy_id is None:
                 await flush_portal_outbox(state_manager, config.portal)
 
             result = await processor.run(
                 run_id=resume_run_id,
                 resume=bool(resume_run_id),
                 limit=limit,
+                vacancy_id=vacancy_id,
             )
 
-            if not config.processor.dry_run:
+            if not config.processor.dry_run and vacancy_id is None:
                 await flush_portal_outbox(state_manager, config.portal)
 
             # Retry close failures

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import time
 from typing import Any, Optional, Union
 
@@ -113,6 +114,9 @@ class BrightStaffingClient:
         # Web session for multiposting (internal endpoint)
         # base_url is e.g. "https://match.b-bright.be/api" -> web root is "https://match.b-bright.be"
         self._web_base_url = self._base_url.rsplit("/api", 1)[0]
+        # The canonical public API URL includes backend/index.php; web routes do not.
+        if self._web_base_url.endswith("/backend/index.php"):
+            self._web_base_url = self._web_base_url[:-len("/backend/index.php")]
         self._web_session_cookies: Optional[dict[str, str]] = None
 
     # -- context manager ----------------------------------------------------- #
@@ -342,6 +346,30 @@ class BrightStaffingClient:
             retryable=False,
         )
 
+    async def get_vacancy_internal_info(self, vacancy_id: str) -> str:
+        """Read internal identity metadata omitted by extraData listings, before duplication."""
+        endpoint = "/vacancy/detail"
+        if not self._client or not self._web_session_cookies:
+            raise ApiError(status_code=401, message="Web session required to preserve vacancy identity", endpoint=endpoint)
+        await self._rate_limiter.acquire()
+        try:
+            response = await self._client.post(
+                f"{self._web_base_url}/index.php/vacancy/detail",
+                data={"uid": str(vacancy_id)}, cookies=self._web_session_cookies,
+                timeout=30.0, follow_redirects=False,
+            )
+            if response.status_code != 200:
+                raise ValueError("Detail request failed")
+            data = response.json()
+            detail = data.get("results", {}).get("detail", {})
+            if data.get("status") != "success" or str(detail.get("uid")) != str(vacancy_id):
+                raise ValueError("Unconfirmed vacancy identity")
+            if "info_internal" not in detail or not isinstance(detail["info_internal"], (str, type(None))):
+                raise ValueError("Missing internal metadata")
+            return detail["info_internal"] or ""
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+            raise ApiError(status_code=502, message="Cannot confirm internal vacancy metadata; refresh stopped before creation", endpoint=endpoint)
+
     async def get_vacancy_documents(self, vacancy_id: str) -> ApiResponse:
         return await self.request("/vacancy/getVacancyDocuments", {"vacancy_id": vacancy_id})
 
@@ -546,6 +574,17 @@ class BrightStaffingClient:
                 message=str(exc),
                 endpoint="/multiposting/deleteVacancy",
             )
+
+    async def verify_web_session(self) -> bool:
+        """Read-only confirmation that the web session is authenticated, not just a login cookie."""
+        if not self._client or not self._web_session_cookies:
+            return False
+        response = await self._client.get(
+            f"{self._web_base_url}/index.php/", cookies=self._web_session_cookies,
+        )
+        return response.status_code == 200 and bool(
+            re.search(r"\bconst\s+User\s*=\s*JSON\.parse\s*\(", response.text)
+        )
 
     async def web_login(self, username: str, password: str) -> bool:
         """Log in to the BrightStaffing web app to get session cookies.

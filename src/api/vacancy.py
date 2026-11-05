@@ -181,6 +181,10 @@ class VacancyService:
         Documents are fetched for backup but cannot be transferred via API.
         """
         vacancy_id = vacancy.id
+        # The office listing omits info_internal even with extraData=true.
+        # Failure must stop before creating or closing any vacancy.
+        internal_info = await self.client.get_vacancy_internal_info(vacancy_id)
+        vacancy.raw_data["info_internal"] = internal_info
 
         docs_resp, fields_resp, comps_resp = await asyncio.gather(
             self.client.get_vacancy_documents(vacancy_id),

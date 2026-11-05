@@ -212,6 +212,7 @@ def mock_client(mock_config, mock_api_responses):
     async def mock_add_competence(*args, **kwargs):
         return ApiResponse(success=True, data={"success": True}, status_code=200)
 
+    client.get_vacancy_internal_info = AsyncMock(return_value="")
     client.get_vacancies = AsyncMock(side_effect=mock_get_vacancies)
     client.add_vacancy = AsyncMock(side_effect=mock_add_vacancy)
     client.close_vacancy = AsyncMock(side_effect=mock_close_vacancy)

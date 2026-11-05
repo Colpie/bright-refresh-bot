@@ -112,6 +112,21 @@ class TestVacancyService:
         assert new_id == "V999"
         mock_client.add_vacancy.assert_called_once()
 
+    async def test_internal_identity_survives_fetch_and_duplication(self, vacancy_service, mock_client, sample_complete_vacancy):
+        marker = "Byner-ID: a15P400000EnUTgIAN | Byner: 135 | Klant: P&V Panels | Recruiter: Lisa"
+        mock_client.get_vacancy_internal_info.return_value = marker
+        complete = await vacancy_service.get_complete_vacancy(sample_complete_vacancy.vacancy)
+        await vacancy_service.duplicate_vacancy(complete)
+        assert mock_client.add_vacancy.call_args.args[0]["info_internal"] == marker
+        assert mock_client.add_vacancy.call_args.args[0]["vacancy_id"] == 0
+
+    async def test_missing_detail_does_not_create_or_close(self, vacancy_service, mock_client, sample_complete_vacancy):
+        mock_client.get_vacancy_internal_info.side_effect = ApiError(status_code=502, message="Detail unavailable", endpoint="/vacancy/detail")
+        with pytest.raises(ApiError):
+            await vacancy_service.get_complete_vacancy(sample_complete_vacancy.vacancy)
+        mock_client.add_vacancy.assert_not_called()
+        mock_client.close_vacancy.assert_not_called()
+
     async def test_duplicate_vacancy_failure(self, vacancy_service, mock_client, sample_complete_vacancy):
         """Test duplicate failure raises error"""
         mock_client.add_vacancy = AsyncMock(
