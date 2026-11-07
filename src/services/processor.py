@@ -141,8 +141,8 @@ class JobProcessor:
         password = self.client.config.web_password
 
         if not username or not password:
-            if not self.dry_run and self._vacancy_id is not None:
-                raise RuntimeError("Targeted live refresh requires web credentials before any changes")
+            if not self.dry_run:
+                raise RuntimeError("Live refresh requires web credentials before any changes")
             self._logger.warning(
                 "web_login_skipped",
                 reason="BRIGHT_WEB_USERNAME / BRIGHT_WEB_PASSWORD not set, multiposting will be skipped",
@@ -152,12 +152,12 @@ class JobProcessor:
         self._logger.info("web_login_attempt", username=username)
         ok = await self.client.web_login(username, password)
         if ok:
-            if not self.dry_run and self._vacancy_id is not None and not await self.client.verify_web_session():
-                raise RuntimeError("Targeted live refresh requires a verified Bright web session before any changes")
+            if not self.dry_run and not await self.client.verify_web_session():
+                raise RuntimeError("Live refresh requires a verified Bright web session before any changes")
             self._logger.info("web_login_success", username=username)
         else:
-            if not self.dry_run and self._vacancy_id is not None:
-                raise RuntimeError("Bright web login failed; targeted refresh stopped before changes")
+            if not self.dry_run:
+                raise RuntimeError("Bright web login failed; refresh stopped before changes")
             self._logger.error("web_login_failed", username=username)
 
     # ------------------------------------------------------------------ #
@@ -165,7 +165,7 @@ class JobProcessor:
     # ------------------------------------------------------------------ #
 
     async def _fresh_run(self) -> BatchResult:
-        # Log in to web app for multiposting (non-fatal if credentials missing)
+        # Verify the web session before processing any live vacancy.
         await self._ensure_web_session()
 
         self._logger.info("fetching_open_vacancies", run_id=self._run_id)
@@ -238,6 +238,9 @@ class JobProcessor:
             )
             vacancies = vacancies[:self._limit]
 
+        if not self.dry_run:
+            await self.client.get_vacancy_internal_info(vacancies[0].id)
+
         self._job_logger.log_run_start(len(vacancies))
         await self.state_manager.start_run(self._run_id, len(vacancies))
 
@@ -285,6 +288,9 @@ class JobProcessor:
                     run_id=self._run_id,
                     vacancy_id=vid,
                 )
+
+        if vacancies and not self.dry_run:
+            await self.client.get_vacancy_internal_info(vacancies[0].id)
 
         return await self._process_vacancies(vacancies)
 

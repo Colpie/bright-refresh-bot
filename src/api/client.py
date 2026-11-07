@@ -351,24 +351,43 @@ class BrightStaffingClient:
         endpoint = "/vacancy/detail"
         if not self._client or not self._web_session_cookies:
             raise ApiError(status_code=401, message="Web session required to preserve vacancy identity", endpoint=endpoint)
-        await self._rate_limiter.acquire()
-        try:
-            response = await self._client.post(
-                f"{self._web_base_url}/index.php/vacancy/detail",
-                data={"uid": str(vacancy_id)}, cookies=self._web_session_cookies,
-                timeout=30.0, follow_redirects=False,
-            )
-            if response.status_code != 200:
-                raise ValueError("Detail request failed")
-            data = response.json()
-            detail = data.get("results", {}).get("detail", {})
-            if data.get("status") != "success" or str(detail.get("uid")) != str(vacancy_id):
-                raise ValueError("Unconfirmed vacancy identity")
-            if "info_internal" not in detail or not isinstance(detail["info_internal"], (str, type(None))):
-                raise ValueError("Missing internal metadata")
-            return detail["info_internal"] or ""
-        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
-            raise ApiError(status_code=502, message="Cannot confirm internal vacancy metadata; refresh stopped before creation", endpoint=endpoint)
+        reason = "unconfirmed response"
+        for attempt in range(2):
+            await self._rate_limiter.acquire()
+            try:
+                response = await self._client.post(
+                    f"{self._web_base_url}/index.php/vacancy/detail",
+                    data={"uid": str(vacancy_id)}, cookies=self._web_session_cookies,
+                    timeout=30.0, follow_redirects=False,
+                )
+                reason = f"Bright HTTP {response.status_code}"
+                if response.status_code != 200:
+                    raise ValueError(reason)
+                reason = "Bright returned non-JSON content (possibly an expired login session)"
+                data = response.json()
+                reason = "Bright detail response has an unexpected structure"
+                detail = data.get("results", {}).get("detail", {})
+                reason = "Bright did not confirm the requested vacancy ID and success status"
+                if data.get("status") != "success" or str(detail.get("uid")) != str(vacancy_id):
+                    raise ValueError(reason)
+                reason = "Bright detail lacks readable info_internal"
+                if "info_internal" not in detail or not isinstance(detail["info_internal"], (str, type(None))):
+                    raise ValueError(reason)
+                return detail["info_internal"] or ""
+            except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+                if isinstance(exc, httpx.HTTPError):
+                    reason = f"Bright transport failure ({type(exc).__name__})"
+                self._logger.warning("vacancy_detail_unconfirmed", vacancy_id=str(vacancy_id),
+                                     reason=reason, attempt=attempt + 1)
+                # Retry only this read, never a vacancy creation or publication.
+                if (attempt == 0 and self.config.web_username and self.config.web_password
+                        and await self.web_login(self.config.web_username, self.config.web_password)
+                        and await self.verify_web_session()):
+                    continue
+                break
+        raise ApiError(status_code=502,
+                       message=f"Cannot confirm internal vacancy metadata: {reason}; refresh stopped before creation",
+                       endpoint=endpoint)
 
     async def get_vacancy_documents(self, vacancy_id: str) -> ApiResponse:
         return await self.request("/vacancy/getVacancyDocuments", {"vacancy_id": vacancy_id})

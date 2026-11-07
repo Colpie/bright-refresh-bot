@@ -92,6 +92,7 @@ class TestJobProcessor:
             dry_run=False,
         )
 
+        processor._ensure_web_session = AsyncMock()
         call_count = 0
 
         async def mock_add_with_error(*args, **kwargs):
@@ -121,6 +122,7 @@ class TestJobProcessor:
             dry_run=False,
         )
 
+        processor._ensure_web_session = AsyncMock()
         call_count = 0
 
         async def mock_add_with_error(*args, **kwargs):
