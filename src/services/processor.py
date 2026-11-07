@@ -93,14 +93,8 @@ class JobProcessor:
         run_id: Optional[str] = None,
         resume: bool = False,
         limit: Optional[int] = None,
-        vacancy_id: Optional[str] = None,
     ) -> BatchResult:
         """Execute the job refresh process."""
-        if vacancy_id is not None and resume:
-            raise ValueError("A targeted vacancy run cannot resume a different batch")
-        if vacancy_id is not None and limit not in (None, 1):
-            raise ValueError("A targeted vacancy run allows only --limit 1")
-        self._vacancy_id = str(vacancy_id) if vacancy_id is not None else None
         self._run_id = run_id or self._generate_run_id()
         self._job_logger = JobLogger(self._run_id)
         self._limit = limit
@@ -141,8 +135,6 @@ class JobProcessor:
         password = self.client.config.web_password
 
         if not username or not password:
-            if not self.dry_run:
-                raise RuntimeError("Live refresh requires web credentials before any changes")
             self._logger.warning(
                 "web_login_skipped",
                 reason="BRIGHT_WEB_USERNAME / BRIGHT_WEB_PASSWORD not set, multiposting will be skipped",
@@ -152,12 +144,8 @@ class JobProcessor:
         self._logger.info("web_login_attempt", username=username)
         ok = await self.client.web_login(username, password)
         if ok:
-            if not self.dry_run and not await self.client.verify_web_session():
-                raise RuntimeError("Live refresh requires a verified Bright web session before any changes")
             self._logger.info("web_login_success", username=username)
         else:
-            if not self.dry_run:
-                raise RuntimeError("Bright web login failed; refresh stopped before changes")
             self._logger.error("web_login_failed", username=username)
 
     # ------------------------------------------------------------------ #
@@ -165,7 +153,7 @@ class JobProcessor:
     # ------------------------------------------------------------------ #
 
     async def _fresh_run(self) -> BatchResult:
-        # Verify the web session before processing any live vacancy.
+        # Log in to web app for multiposting (non-fatal if credentials missing)
         await self._ensure_web_session()
 
         self._logger.info("fetching_open_vacancies", run_id=self._run_id)
@@ -187,17 +175,9 @@ class JobProcessor:
                 office_id=self.office_id,
             )
 
-        if not vacancies and self._vacancy_id is not None:
-            raise ValueError(f"Open vacancy {self._vacancy_id} not found. No refresh started.")
         if not vacancies:
             self._logger.warning("no_vacancies_found", run_id=self._run_id)
             return BatchResult(total=0, successful=0, failed=0, skipped=0)
-
-        if self._vacancy_id is not None:
-            matches = [v for v in vacancies if str(v.id) == self._vacancy_id]
-            if len(matches) != 1:
-                raise ValueError(f"Expected exactly one open vacancy {self._vacancy_id}; found {len(matches)}. No refresh started.")
-            vacancies = matches
 
         filtered_vacancies: list[Vacancy] = []
         skipped_already_processed = 0
@@ -238,9 +218,6 @@ class JobProcessor:
             )
             vacancies = vacancies[:self._limit]
 
-        if not self.dry_run:
-            await self.client.get_vacancy_internal_info(vacancies[0].id)
-
         self._job_logger.log_run_start(len(vacancies))
         await self.state_manager.start_run(self._run_id, len(vacancies))
 
@@ -265,8 +242,6 @@ class JobProcessor:
             return BatchResult(total=0, successful=0, failed=0, skipped=0)
 
         self._logger.info("resuming_run", run_id=self._run_id, pending=len(pending_ids))
-        # Detail metadata must also be preserved when resuming in a new process.
-        await self._ensure_web_session()
 
         if self.office_id and self.office_id.strip().lower() == "all":
             offices = await self.vacancy_service.get_all_offices()
@@ -288,9 +263,6 @@ class JobProcessor:
                     run_id=self._run_id,
                     vacancy_id=vid,
                 )
-
-        if vacancies and not self.dry_run:
-            await self.client.get_vacancy_internal_info(vacancies[0].id)
 
         return await self._process_vacancies(vacancies)
 
