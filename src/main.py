@@ -694,7 +694,7 @@ def recover_run_command(manifest: str, config_path: Optional[str]):
     from .services.run_recovery import recover_run
     config = _load_and_validate_config(config_path)
     plan = json.loads(Path(manifest).read_text())
-    # Two workers, bounded to two requests per second during this one-time repair.
+    # Sequential recovery, bounded to two requests per second during this one-time repair.
     config.api.rate_limit = 2.0
 
     async def execute():

@@ -110,6 +110,7 @@ class BrightStaffingClient:
         self._circuit_breaker = CircuitBreaker(circuit_breaker_threshold)
         self._logger = get_logger("api_client")
         self._client: Optional[httpx.AsyncClient] = None
+        self._api_client: Optional[httpx.AsyncClient] = None
 
         # Web session for multiposting (internal endpoint)
         # base_url is e.g. "https://match.b-bright.be/api" -> web root is "https://match.b-bright.be"
@@ -126,12 +127,19 @@ class BrightStaffingClient:
             timeout=httpx.Timeout(self.config.timeout),
             follow_redirects=True,
         )
+        # API authentication must never receive or overwrite the interactive web session.
+        self._api_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.config.timeout), follow_redirects=True,
+        )
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         if self._client:
             await self._client.aclose()
             self._client = None
+        if self._api_client:
+            await self._api_client.aclose()
+            self._api_client = None
 
     # -- internal helpers ---------------------------------------------------- #
 
@@ -193,7 +201,7 @@ class BrightStaffingClient:
         start = time.monotonic()
 
         try:
-            response = await self._client.post(url, data=self._build_form_data(params))
+            response = await (self._api_client or self._client).post(url, data=self._build_form_data(params))
             elapsed_ms = int((time.monotonic() - start) * 1000)
 
             self._logger.debug(

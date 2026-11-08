@@ -106,7 +106,7 @@ async def repair_pair(client: BrightStaffingClient, old_id: str, new_id: str, ba
     return {'old_id': old_id, 'new_id': new_id, 'status': 'completed'}
 
 
-async def recover_run(client: BrightStaffingClient, manifest: dict, backup: Path, workers: int = 2, emit=print) -> dict:
+async def recover_run(client: BrightStaffingClient, manifest: dict, backup: Path, workers: int = 1, emit=print) -> dict:
     if client._web_base_url != manifest.get('origin'):
         raise ValueError('Recovery manifest belongs to a different Bright host')
     pairs = manifest['pairs']
