@@ -530,7 +530,8 @@ class JobProcessor:
                         event_id = hashlib.sha256(f"{origin}|{int(vacancy.id)}|{int(new_vacancy_id)}".encode()).hexdigest()
                         await flush_portal_outbox(self.state_manager, self.portal_config, event_id=event_id)
             except Exception as exc:
-                raise RuntimeError(f"Publication failed for existing new vacancy {new_vacancy_id}: {exc}") from exc
+                kind = "Publication requires review" if str(exc).startswith("VDAB content validation:") else "Publication failed"
+                raise RuntimeError(f"{kind} for existing new vacancy {new_vacancy_id}: {exc}") from exc
             steps.append("multipost")
 
             # Done
@@ -791,7 +792,9 @@ class JobProcessor:
                         jobboard_id=jobboard_id,
                     )
                 else:
-                    failures.append(f"{channel_name}: {str(response.data)[:400]}")
+                    message = str(response.data)
+                    validation = jobboard_id == 3 and isinstance(response.data, dict) and response.data.get("status") == "success" and any(word in message.lower() for word in ["verplicht", "is required", "ongeldig", "niet geldig"])
+                    failures.append(("VALIDATION " if validation else "") + f"{channel_name}: {message[:400]}")
                     self._logger.warning(
                         "multipost_rejected",
                         vacancy_id=new_vacancy_id,
@@ -812,7 +815,8 @@ class JobProcessor:
                 )
 
         if failures:
-            raise RuntimeError("; ".join(failures))
+            prefix = "VDAB content validation: " if all(message.startswith("VALIDATION ") for message in failures) else ""
+            raise RuntimeError(prefix + "; ".join(failures))
         return publication_response
 
     async def _step_offline(self, vacancy: Vacancy) -> bool:

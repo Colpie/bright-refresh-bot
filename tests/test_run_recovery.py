@@ -74,3 +74,13 @@ async def test_manifest_rejects_cross_host_or_reused_replacement(tmp_path):
     for manifest in [ {'origin':'https://other.example','pairs':[]}, {'origin':c._web_base_url,'pairs':[{'old_id':'100','new_id':'200'},{'old_id':'101','new_id':'200'}]} ]:
         with pytest.raises(ValueError):await recover_run(c,manifest,tmp_path)
     c.get_vacancy_detail.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_required_study_knowledge_is_reviewed_without_inventing_data(tmp_path):
+    c,rows=fake_client()
+    rows['200']['multiposting'][0]['is_published']='1'
+    c.multipost_vacancy=AsyncMock(return_value=ApiResponse(success=False,data={'status':'success','results':[{'status':'error','result':'Minimum 1 studiekennis competentie is verplicht'}]},status_code=200))
+    with pytest.raises(RecoveryReview,match='content validation'):
+        await repair_pair(c,'100','200',tmp_path)
+    assert rows['200']['studies']==[]
