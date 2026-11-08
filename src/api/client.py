@@ -479,7 +479,8 @@ class BrightStaffingClient:
             if value is None or value is False:
                 return True
             if isinstance(value, dict):
-                if value.get("status") in ("error", "failed") or value.get("success") is False:
+                if (value.get("status") in ("error", "failed") or value.get("success") is False
+                        or "kwaliteit-blokkerend" in str(value.get("result", "")).lower()):
                     return True
                 return any(rejected(item) for item in value.values() if isinstance(item, (dict, list)))
             if isinstance(value, list):

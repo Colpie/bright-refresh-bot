@@ -97,7 +97,7 @@ async def repair_pair(client: BrightStaffingClient, old_id: str, new_id: str, ba
         response = await client.multipost_vacancy(new_id, channel)
         if not response.success:
             message = str(response.data)
-            if channel == 3 and isinstance(response.data, dict) and response.data.get('status') == 'success' and any(word in message.lower() for word in ['verplicht', 'is required', 'ongeldig', 'niet geldig']):
+            if channel == 3 and isinstance(response.data, dict) and response.data.get('status') == 'success' and any(word in message.lower() for word in ['verplicht', 'is required', 'ongeldig', 'niet geldig', 'kwaliteit-blokkerend']):
                 raise RecoveryReview(f'VDAB content validation: {message[:550]}')
             raise RuntimeError(f'Channel {channel} publication failed: {message[:350]}')
     final_old = await client.get_vacancy_detail(old_id)
@@ -133,6 +133,8 @@ async def recover_run(client: BrightStaffingClient, manifest: dict, backup: Path
                 break
             old_id, new_id = str(pair['old_id']), str(pair['new_id'])
             try:
+                if pair.get('review'):
+                    raise RecoveryReview(pair['review'])
                 event = await repair_pair(client, old_id, new_id, backup)
                 counts['completed'] += 1
             except RecoveryReview as exc:

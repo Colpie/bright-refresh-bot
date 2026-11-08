@@ -12,6 +12,8 @@ from src.config import ApiConfig
     ({'status': 'success', 'results': [{'status': 'success'}, {'status': 'error'}]}, False),
     ({'status': 'success', 'results': [{'status': 'success'}]}, True),
     ({'status': 'error', 'results': []}, False),
+    ({'status': 'success', 'results': [{'status': 'warning', 'result': 'Kwaliteit-blokkerend: specifieke studies vereist'}]}, False),
+    ({'status': 'success', 'results': [{'status': 'warning', 'result': 'Niet blokkerende opmerking'}]}, True),
 ])
 async def test_channel_error_overrides_success_envelope(method, payload, expected):
     client = BrightStaffingClient(ApiConfig(base_url='https://test.b-bright.be/api'))
