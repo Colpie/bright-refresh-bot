@@ -181,6 +181,18 @@ class VacancyService:
         Documents are fetched for backup but cannot be transferred via API.
         """
         vacancy_id = vacancy.id
+        # The office listing omits info_internal even with extraData=true.
+        # Failure must stop before creating or closing any vacancy.
+        detail = await self.client.get_vacancy_detail(vacancy_id)
+        vacancy.raw_data["info_internal"] = detail["detail"]["info_internal"] or ""
+        # The public competence endpoint can return [] while the actual fiche has codes.
+        # Preserve the verified fiche, and never interpret missing data as an empty selection.
+        raw_competences = detail.get("vdab_competences")
+        if not isinstance(raw_competences, list):
+            raise RuntimeError("Bright detail does not confirm the selected VDAB competences")
+        if any(not isinstance(row, dict) or not str(row.get("vdab_competence_code", "")).isdigit()
+               for row in raw_competences):
+            raise RuntimeError("Bright detail contains unreadable VDAB competence codes")
 
         docs_resp, fields_resp, comps_resp = await asyncio.gather(
             self.client.get_vacancy_documents(vacancy_id),
@@ -191,7 +203,7 @@ class VacancyService:
 
         documents = _safe_parse_list(docs_resp, lambda d: VacancyDocument.from_api(d, vacancy_id), "documents")
         custom_fields = _safe_parse_list(fields_resp, VacancyCustomField.from_api, "custom_fields")
-        competences = _safe_parse_list(comps_resp, VdabCompetence.from_api, "VDAB competences")
+        competences = [VdabCompetence.from_api(row) for row in raw_competences]
 
         self._logger.debug(
             "complete_vacancy_fetched",

@@ -93,8 +93,14 @@ class JobProcessor:
         run_id: Optional[str] = None,
         resume: bool = False,
         limit: Optional[int] = None,
+        vacancy_id: Optional[str] = None,
     ) -> BatchResult:
         """Execute the job refresh process."""
+        if vacancy_id is not None and resume:
+            raise ValueError("A targeted vacancy run cannot resume a different batch")
+        if vacancy_id is not None and limit not in (None, 1):
+            raise ValueError("A targeted vacancy run allows only --limit 1")
+        self._vacancy_id = str(vacancy_id) if vacancy_id is not None else None
         self._run_id = run_id or self._generate_run_id()
         self._job_logger = JobLogger(self._run_id)
         self._limit = limit
@@ -135,6 +141,8 @@ class JobProcessor:
         password = self.client.config.web_password
 
         if not username or not password:
+            if not self.dry_run:
+                raise RuntimeError("Live refresh requires web credentials before any changes")
             self._logger.warning(
                 "web_login_skipped",
                 reason="BRIGHT_WEB_USERNAME / BRIGHT_WEB_PASSWORD not set, multiposting will be skipped",
@@ -144,8 +152,12 @@ class JobProcessor:
         self._logger.info("web_login_attempt", username=username)
         ok = await self.client.web_login(username, password)
         if ok:
+            if not self.dry_run and not await self.client.verify_web_session():
+                raise RuntimeError("Live refresh requires a verified Bright web session before any changes")
             self._logger.info("web_login_success", username=username)
         else:
+            if not self.dry_run:
+                raise RuntimeError("Bright web login failed; refresh stopped before changes")
             self._logger.error("web_login_failed", username=username)
 
     # ------------------------------------------------------------------ #
@@ -153,7 +165,7 @@ class JobProcessor:
     # ------------------------------------------------------------------ #
 
     async def _fresh_run(self) -> BatchResult:
-        # Log in to web app for multiposting (non-fatal if credentials missing)
+        # Verify the web session before processing any live vacancy.
         await self._ensure_web_session()
 
         self._logger.info("fetching_open_vacancies", run_id=self._run_id)
@@ -175,9 +187,17 @@ class JobProcessor:
                 office_id=self.office_id,
             )
 
+        if not vacancies and self._vacancy_id is not None:
+            raise ValueError(f"Open vacancy {self._vacancy_id} not found. No refresh started.")
         if not vacancies:
             self._logger.warning("no_vacancies_found", run_id=self._run_id)
             return BatchResult(total=0, successful=0, failed=0, skipped=0)
+
+        if self._vacancy_id is not None:
+            matches = [v for v in vacancies if str(v.id) == self._vacancy_id]
+            if len(matches) != 1:
+                raise ValueError(f"Expected exactly one open vacancy {self._vacancy_id}; found {len(matches)}. No refresh started.")
+            vacancies = matches
 
         filtered_vacancies: list[Vacancy] = []
         skipped_already_processed = 0
@@ -218,6 +238,9 @@ class JobProcessor:
             )
             vacancies = vacancies[:self._limit]
 
+        if not self.dry_run:
+            await self.client.get_vacancy_internal_info(vacancies[0].id)
+
         self._job_logger.log_run_start(len(vacancies))
         await self.state_manager.start_run(self._run_id, len(vacancies))
 
@@ -242,6 +265,8 @@ class JobProcessor:
             return BatchResult(total=0, successful=0, failed=0, skipped=0)
 
         self._logger.info("resuming_run", run_id=self._run_id, pending=len(pending_ids))
+        # Detail metadata must also be preserved when resuming in a new process.
+        await self._ensure_web_session()
 
         if self.office_id and self.office_id.strip().lower() == "all":
             offices = await self.vacancy_service.get_all_offices()
@@ -263,6 +288,9 @@ class JobProcessor:
                     run_id=self._run_id,
                     vacancy_id=vid,
                 )
+
+        if vacancies and not self.dry_run:
+            await self.client.get_vacancy_internal_info(vacancies[0].id)
 
         return await self._process_vacancies(vacancies)
 
@@ -307,7 +335,8 @@ class JobProcessor:
 
                 try:
                     result = await self._process_single(vacancy)
-                    if not result.success and not self.config.continue_on_error:
+                    if not result.success and (not self.config.continue_on_error
+                            or (result.error_message or "").startswith(("VDAB unpost failed", "Publication failed"))):
                         self._logger.warning("stopping_on_error", vacancy_id=vacancy.id)
                         stop_flag.set()
                     return result
@@ -411,6 +440,15 @@ class JobProcessor:
                 new_vacancy_id=new_vacancy_id,
             )
 
+            # Verify competence transfer before opening or closing either record.
+            if not self.dry_run and complete.competences:
+                created = await self.client.get_vacancy_detail(new_vacancy_id)
+                expected = sorted(str(row.id) for row in complete.competences)
+                actual = sorted(str(row.get("vdab_competence_code", ""))
+                                for row in created.get("vdab_competences", []))
+                if expected != actual:
+                    raise RuntimeError(f"Publication failed: VDAB competences were not preserved on existing new vacancy {new_vacancy_id}; original untouched")
+
             # 4 - Open new vacancy
             await self._step_open(new_vacancy_id)
             steps.append("open")
@@ -492,11 +530,7 @@ class JobProcessor:
                         event_id = hashlib.sha256(f"{origin}|{int(vacancy.id)}|{int(new_vacancy_id)}".encode()).hexdigest()
                         await flush_portal_outbox(self.state_manager, self.portal_config, event_id=event_id)
             except Exception as exc:
-                self._logger.error(
-                    "multipost_failed",
-                    vacancy_id=new_vacancy_id,
-                    error=str(exc),
-                )
+                raise RuntimeError(f"Publication failed for existing new vacancy {new_vacancy_id}: {exc}") from exc
             steps.append("multipost")
 
             # Done
@@ -703,7 +737,7 @@ class JobProcessor:
         """Trigger multiposting to configured channels (Website, VDAB).
 
         Uses the internal web endpoint /multiposting/addVacancy which
-        requires session-based auth. Failures are non-fatal.
+        requires session-based auth. A failed channel makes the vacancy fail.
         """
         if not self.config.multipost_channels:
             return
@@ -721,9 +755,10 @@ class JobProcessor:
                 vacancy_id=new_vacancy_id,
                 reason="No web session - set BRIGHT_WEB_USERNAME and BRIGHT_WEB_PASSWORD",
             )
-            return
+            raise RuntimeError("Cannot publish without a verified web session")
 
         publication_response = None
+        failures = []
         channel_names = {1: "Website", 3: "VDAB"}
 
         for jobboard_id in self.config.multipost_channels:
@@ -756,6 +791,7 @@ class JobProcessor:
                         jobboard_id=jobboard_id,
                     )
                 else:
+                    failures.append(f"{channel_name}: {str(response.data)[:400]}")
                     self._logger.warning(
                         "multipost_rejected",
                         vacancy_id=new_vacancy_id,
@@ -766,6 +802,7 @@ class JobProcessor:
             except CircuitBreakerOpen:
                 raise
             except Exception as exc:
+                failures.append(f"{channel_name}: {type(exc).__name__}")
                 self._logger.error(
                     "multipost_error",
                     vacancy_id=new_vacancy_id,
@@ -774,6 +811,8 @@ class JobProcessor:
                     error=str(exc),
                 )
 
+        if failures:
+            raise RuntimeError("; ".join(failures))
         return publication_response
 
     async def _step_offline(self, vacancy: Vacancy) -> bool:
@@ -820,7 +859,7 @@ class JobProcessor:
                     "vdab_unpost_failed_after_retry",
                     vacancy_id=vacancy.id,
                     jobboard_id=vdab_jobboard_id,
-                    reason="Continuing with close anyway",
+                    reason="Close skipped until VDAB removal is confirmed",
                 )
                 self._job_logger.log_vacancy_step(
                     vacancy.id,
@@ -839,7 +878,7 @@ class JobProcessor:
                 jobboard_id=vdab_jobboard_id,
                 error=str(exc),
                 error_type=type(exc).__name__,
-                reason="Continuing with close anyway",
+                reason="Close skipped until VDAB removal is confirmed",
             )
             self._job_logger.log_vacancy_step(
                 vacancy.id,
@@ -980,10 +1019,21 @@ class JobProcessor:
             )
 
             if closed:
+                try:
+                    publication = await self._step_multipost(record.new_vacancy_id)
+                    if publication is not None and not self.dry_run:
+                        await self.state_manager.queue_portal_refresh(
+                            bright_origin(self.client.config.base_url), int(record.original_vacancy_id),
+                            int(record.new_vacancy_id), publication,
+                        )
+                except Exception as exc:
+                    await self.state_manager.update_vacancy_status(run_id, record.original_vacancy_id,
+                        "failed", error_message=f"Publication failed for existing new vacancy {record.new_vacancy_id}: {exc}")
+                    continue
                 await self.state_manager.update_vacancy_status(
                     run_id,
                     record.original_vacancy_id,
-                    "recovered",
+                    "completed",
                     new_vacancy_id=record.new_vacancy_id,
                     error_message=None,
                 )

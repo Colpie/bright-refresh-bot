@@ -92,6 +92,8 @@ class TestJobProcessor:
             dry_run=False,
         )
 
+        processor._ensure_web_session = AsyncMock()
+        processor._step_multipost = AsyncMock(return_value=None)
         call_count = 0
 
         async def mock_add_with_error(*args, **kwargs):
@@ -121,6 +123,7 @@ class TestJobProcessor:
             dry_run=False,
         )
 
+        processor._ensure_web_session = AsyncMock()
         call_count = 0
 
         async def mock_add_with_error(*args, **kwargs):
@@ -195,3 +198,51 @@ class TestBatchResult:
         assert batch.successful == 2
         assert batch.failed == 1
         assert len(batch.results) == 3
+
+@pytest.mark.asyncio
+class TestExactVacancySelection:
+    async def test_only_selected_vacancy_is_processed(self, state_manager, mock_client):
+        processor = JobProcessor(mock_client, ProcessorConfig(), state_manager, dry_run=True)
+        chosen = Vacancy(id="93833", title="Chosen", status=VacancyStatus.OPEN)
+        other = Vacancy(id="93834", title="Other", status=VacancyStatus.OPEN)
+        processor._ensure_web_session = AsyncMock()
+        processor.vacancy_service.get_all_open_vacancies = AsyncMock(return_value=[other, chosen])
+        processor._process_vacancies = AsyncMock(return_value=BatchResult(1, 1, 0, 0))
+        result = await processor.run(vacancy_id="93833")
+        assert result.total == 1
+        processor._process_vacancies.assert_awaited_once_with([chosen])
+
+    async def test_missing_exact_id_never_processes_first_available(self, state_manager, mock_client):
+        processor = JobProcessor(mock_client, ProcessorConfig(), state_manager, dry_run=True)
+        processor._ensure_web_session = AsyncMock()
+        processor.vacancy_service.get_all_open_vacancies = AsyncMock(return_value=[Vacancy(id="93834", title="Other")])
+        processor._process_vacancies = AsyncMock()
+        with pytest.raises(ValueError, match="93833"):
+            await processor.run(vacancy_id="93833")
+        processor._process_vacancies.assert_not_awaited()
+
+    async def test_empty_source_fails_for_explicit_target(self, state_manager, mock_client):
+        processor = JobProcessor(mock_client, ProcessorConfig(), state_manager, dry_run=True)
+        processor._ensure_web_session = AsyncMock()
+        processor.vacancy_service.get_all_open_vacancies = AsyncMock(return_value=[])
+        processor._process_vacancies = AsyncMock()
+        with pytest.raises(ValueError, match="93833"):
+            await processor.run(vacancy_id="93833")
+        processor._process_vacancies.assert_not_awaited()
+
+    async def test_target_cannot_resume_other_batch(self, state_manager, mock_client):
+        processor = JobProcessor(mock_client, ProcessorConfig(), state_manager, dry_run=True)
+        processor._resume_run = AsyncMock()
+        with pytest.raises(ValueError, match="cannot resume"):
+            await processor.run(run_id="older", resume=True, vacancy_id="93833")
+        processor._resume_run.assert_not_awaited()
+
+    async def test_duplicate_target_ids_fail_before_processing(self, state_manager, mock_client):
+        processor = JobProcessor(mock_client, ProcessorConfig(), state_manager, dry_run=True)
+        processor._ensure_web_session = AsyncMock()
+        chosen = Vacancy(id="93833", title="Chosen")
+        processor.vacancy_service.get_all_open_vacancies = AsyncMock(return_value=[chosen, chosen])
+        processor._process_vacancies = AsyncMock()
+        with pytest.raises(ValueError, match="exactly one"):
+            await processor.run(vacancy_id="93833")
+        processor._process_vacancies.assert_not_awaited()

@@ -293,10 +293,13 @@ def cli():
 @click.option("--dry-run", is_flag=True, help="Run without making actual API calls")
 @click.option("--config", "config_path", type=click.Path(exists=True), help="Path to config file")
 @click.option("--resume", "resume_run_id", help="Resume a previous run by ID")
-@click.option("--limit", type=int, help="Process only first N vacancies (for testing)")
+@click.option("--limit", type=click.IntRange(min=1), help="Process only first N vacancies (for testing)")
+@click.option("--vacancy-id", type=click.IntRange(min=1), help="Refresh only this exact open Bright vacancy")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
-def run(dry_run: bool, config_path: Optional[str], resume_run_id: Optional[str], limit: Optional[int], verbose: bool):
+def run(dry_run: bool, config_path: Optional[str], resume_run_id: Optional[str], limit: Optional[int], verbose: bool, vacancy_id: Optional[int]):
     """Run the job refresh process"""
+    if vacancy_id is not None and (resume_run_id is not None or limit not in (None, 1)):
+        raise click.UsageError("--vacancy-id cannot combine with --resume or a limit other than 1")
     _print_banner()
     config = _load_and_validate_config(config_path, dry_run=dry_run, verbose=verbose)
     _print_config_summary(config)
@@ -316,7 +319,7 @@ def run(dry_run: bool, config_path: Optional[str], resume_run_id: Optional[str],
         console.print("[green]Pre-flight checks passed[/green]\n")
 
     try:
-        result = asyncio.run(_run_processor(config, resume_run_id, limit))
+        result = asyncio.run(_run_processor(config, resume_run_id, limit, str(vacancy_id) if vacancy_id is not None else None))
         _print_result_summary(result)
         if result.failed > 0:
             _ping_heartbeat(success=False)
@@ -333,7 +336,7 @@ def run(dry_run: bool, config_path: Optional[str], resume_run_id: Optional[str],
         sys.exit(1)
 
 
-async def _run_processor(config: Config, resume_run_id: Optional[str], limit: Optional[int] = None):
+async def _run_processor(config: Config, resume_run_id: Optional[str], limit: Optional[int] = None, vacancy_id: Optional[str] = None):
     state_manager = StateManager(config.state.db_path)
     await state_manager.initialize()
 
@@ -352,26 +355,30 @@ async def _run_processor(config: Config, resume_run_id: Optional[str], limit: Op
                 portal_config=config.portal,
             )
 
-            if not config.processor.dry_run:
+            if not config.processor.dry_run and vacancy_id is None:
                 await flush_portal_outbox(state_manager, config.portal)
 
             result = await processor.run(
                 run_id=resume_run_id,
                 resume=bool(resume_run_id),
                 limit=limit,
+                vacancy_id=vacancy_id,
             )
 
-            if not config.processor.dry_run:
+            if not config.processor.dry_run and vacancy_id is None:
                 await flush_portal_outbox(state_manager, config.portal)
 
             # Retry close failures
             await processor.retry_failed_closures(processor.run_id)
-
-            reporter = Reporter(state_manager, config.alerts)
-            report = await reporter.generate_report(
-                processor.run_id,
-                dry_run=config.processor.dry_run,
-            )
+            recovered = {str(row.original_vacancy_id) for row in await state_manager.get_run_records(processor.run_id)
+                         if row.status == "completed"}
+            for item in result.results:
+                if str(item.original_vacancy_id) in recovered:
+                    item.success = True
+                    item.error_message = None
+            result.successful = sum(item.success for item in result.results)
+            result.failed = sum(not item.success for item in result.results)
+            await state_manager.complete_run(processor.run_id, result.successful, result.failed, result.skipped)
 
             reporter = Reporter(state_manager, config.alerts)
             report = await reporter.generate_report(
@@ -676,6 +683,58 @@ async def _run_rollback(
             reopen_closed=reopen_closed,
             close_duplicates=close_duplicates,
         )
+
+
+@cli.command("recover-run")
+@click.option("--manifest", required=True, type=click.Path(exists=True))
+@click.option("--config", "config_path", type=click.Path(exists=True))
+def recover_run_command(manifest: str, config_path: Optional[str]):
+    """Finish known existing replacements without creating any new vacancy."""
+    import json
+    from .services.run_recovery import recover_run
+    config = _load_and_validate_config(config_path)
+    plan = json.loads(Path(manifest).read_text())
+    # Two workers, bounded to two requests per second during this one-time repair.
+    config.api.rate_limit = 2.0
+
+    async def execute():
+        async with BrightStaffingClient(config.api) as client:
+            if not await client.web_login(config.api.web_username, config.api.web_password) or not await client.verify_web_session():
+                raise RuntimeError("A verified Bright web session is required")
+            def emit(line):
+                payload = json.loads(line)
+                payload.pop("event", None)
+                get_logger("run_recovery").info("recovery_progress", **payload)
+            return await recover_run(client, plan, Path(config.state.db_path).parent / plan['run_id'], emit=emit)
+    try:
+        counts = asyncio.run(execute())
+        console.print(counts)
+        if counts['completed'] != counts['total']:
+            raise click.ClickException("Recovery incomplete; inspect recorded errors before repeating")
+    except click.ClickException:
+        raise
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@cli.command("recover-publication")
+@click.option("--original-id", required=True, type=click.IntRange(min=1))
+@click.option("--new-id", required=True, type=click.IntRange(min=1))
+@click.option("--config", "config_path", type=click.Path(exists=True))
+def recover_publication_command(original_id: int, new_id: int, config_path: Optional[str]):
+    """Publish an existing verified replacement; never create or close vacancies."""
+    from .services.publication_recovery import recover_publication
+    config = _load_and_validate_config(config_path)
+
+    async def execute():
+        async with BrightStaffingClient(config.api) as client:
+            if not await client.web_login(config.api.web_username, config.api.web_password) or not await client.verify_web_session():
+                raise RuntimeError("A verified Bright web session is required")
+            return await recover_publication(client, str(original_id), str(new_id), config.processor.multipost_channels)
+    try:
+        console.print(asyncio.run(execute()))
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @cli.command("portal-sync")

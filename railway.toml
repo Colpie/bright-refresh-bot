@@ -17,6 +17,6 @@ root = "."
 # dead-man's-switch: if this cron silently fails to trigger some week,
 # you get notified because no ping arrives, instead of only finding out
 # weeks later.
-startCommand = "python -m src.main run"
+startCommand = "python -m src.main recover-run --manifest config/recovery-2026-11-07.json"
 cronSchedule = "37 8 * * 6"
 restartPolicyType = "NEVER"

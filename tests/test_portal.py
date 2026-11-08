@@ -115,7 +115,8 @@ async def test_pipeline_only_saves_real_successful_vdab_publications(state_manag
     processor._job_logger = MagicMock()
     await state_manager.start_run(processor._run_id, 1)
     await state_manager.add_vacancy_record(processor._run_id, "100")
-    processor._step_fetch = AsyncMock(return_value=MagicMock())
+    complete=MagicMock();complete.competences=[]
+    processor._step_fetch = AsyncMock(return_value=complete)
     processor._step_backup_documents = AsyncMock()
     processor._step_duplicate = AsyncMock(return_value="200")
     processor._step_open = AsyncMock()

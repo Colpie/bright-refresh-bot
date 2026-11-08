@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import time
 from typing import Any, Optional, Union
 
@@ -113,6 +114,9 @@ class BrightStaffingClient:
         # Web session for multiposting (internal endpoint)
         # base_url is e.g. "https://match.b-bright.be/api" -> web root is "https://match.b-bright.be"
         self._web_base_url = self._base_url.rsplit("/api", 1)[0]
+        # The canonical public API URL includes backend/index.php; web routes do not.
+        if self._web_base_url.endswith("/backend/index.php"):
+            self._web_base_url = self._web_base_url[:-len("/backend/index.php")]
         self._web_session_cookies: Optional[dict[str, str]] = None
 
     # -- context manager ----------------------------------------------------- #
@@ -333,7 +337,35 @@ class BrightStaffingClient:
         }
         if extra_info:
             params["extra_info"] = extra_info
-        return await self.request("/vacancy/closeVacancy", params, retryable=True)
+
+        async def confirmed_closed() -> bool:
+            if not self._web_session_cookies:
+                return False
+            try:
+                result = await self.get_vacancy_detail(str(vacancy_id))
+                detail = result["detail"]
+                return (str(detail.get("is_closed")) == "1"
+                        and str(detail.get("closereason_id")) == str(closereason_id))
+            except (ApiError, ValueError, TypeError, KeyError):
+                return False
+
+        confirmation = ApiResponse(success=True, data={"updated_vacancy_id": str(vacancy_id),
+                                                        "confirmed_from_detail": True}, status_code=200)
+        if await confirmed_closed():
+            return confirmation
+        try:
+            # A gateway failure can occur after Bright has committed the close.
+            # Confirm its state before deciding to repeat a write.
+            response = await self.request("/vacancy/closeVacancy", params, retryable=False)
+        except ApiError:
+            if await confirmed_closed():
+                return confirmation
+            raise
+        if self._web_session_cookies:
+            if await confirmed_closed():
+                return confirmation
+            raise ApiError(status_code=502, message="Bright did not confirm the requested close status", endpoint="/vacancy/closeVacancy")
+        return response
 
     async def open_vacancy(self, vacancy_id: str) -> ApiResponse:
         return await self.request(
@@ -341,6 +373,53 @@ class BrightStaffingClient:
             {"vacancy_id": vacancy_id},
             retryable=False,
         )
+
+    async def get_vacancy_internal_info(self, vacancy_id: str) -> str:
+        results = await self.get_vacancy_detail(vacancy_id)
+        return results["detail"]["info_internal"] or ""
+
+    async def get_vacancy_detail(self, vacancy_id: str) -> dict:
+        """Read a verified detail response, including channel publication state."""
+        endpoint = "/vacancy/detail"
+        if not self._client or not self._web_session_cookies:
+            raise ApiError(status_code=401, message="Web session required to preserve vacancy identity", endpoint=endpoint)
+        reason = "unconfirmed response"
+        for attempt in range(2):
+            await self._rate_limiter.acquire()
+            try:
+                response = await self._client.post(
+                    f"{self._web_base_url}/index.php/vacancy/detail",
+                    data={"uid": str(vacancy_id)}, cookies=self._web_session_cookies,
+                    timeout=30.0, follow_redirects=False,
+                )
+                reason = f"Bright HTTP {response.status_code}"
+                if response.status_code != 200:
+                    raise ValueError(reason)
+                reason = "Bright returned non-JSON content (possibly an expired login session)"
+                data = response.json()
+                reason = "Bright detail response has an unexpected structure"
+                detail = data.get("results", {}).get("detail", {})
+                reason = "Bright did not confirm the requested vacancy ID and success status"
+                if data.get("status") != "success" or str(detail.get("uid")) != str(vacancy_id):
+                    raise ValueError(reason)
+                reason = "Bright detail lacks readable info_internal"
+                if "info_internal" not in detail or not isinstance(detail["info_internal"], (str, type(None))):
+                    raise ValueError(reason)
+                return data["results"]
+            except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+                if isinstance(exc, httpx.HTTPError):
+                    reason = f"Bright transport failure ({type(exc).__name__})"
+                self._logger.warning("vacancy_detail_unconfirmed", vacancy_id=str(vacancy_id),
+                                     reason=reason, attempt=attempt + 1)
+                # Retry only this read, never a vacancy creation or publication.
+                if (attempt == 0 and self.config.web_username and self.config.web_password
+                        and await self.web_login(self.config.web_username, self.config.web_password)
+                        and await self.verify_web_session()):
+                    continue
+                break
+        raise ApiError(status_code=502,
+                       message=f"Cannot confirm internal vacancy metadata: {reason}; refresh stopped before creation",
+                       endpoint=endpoint)
 
     async def get_vacancy_documents(self, vacancy_id: str) -> ApiResponse:
         return await self.request("/vacancy/getVacancyDocuments", {"vacancy_id": vacancy_id})
@@ -381,6 +460,25 @@ class BrightStaffingClient:
         return await self.request("/office/getOffices")
 
     # -- multiposting (web session) ----------------------------------------- #
+
+    @staticmethod
+    def _web_operation_succeeded(data: Any) -> bool:
+        """An HTTP/envelope success does not override a jobboard rejection."""
+        if not isinstance(data, dict) or data.get("status") != "success":
+            return False
+
+        def rejected(value: Any) -> bool:
+            if value is None or value is False:
+                return True
+            if isinstance(value, dict):
+                if value.get("status") in ("error", "failed") or value.get("success") is False:
+                    return True
+                return any(rejected(item) for item in value.values() if isinstance(item, (dict, list)))
+            if isinstance(value, list):
+                return any(rejected(item) for item in value)
+            return False
+
+        return not rejected(data.get("results", []))
 
     async def multipost_vacancy(
         self,
@@ -446,24 +544,7 @@ class BrightStaffingClient:
                 except Exception:
                     data = response.text
 
-                # Check for "Access denied" or error status
-                if isinstance(data, dict) and data.get("status") == "error":
-                    return ApiResponse(success=False, data=data, status_code=200)
-
-                # Check for VDAB-style rejection: status=success but results=[None]
-                # This means the jobboard rejected the vacancy (e.g. invalid competence codes)
-                if isinstance(data, dict) and data.get("status") == "success":
-                    results = data.get("results", [])
-                    if results and all(r is None for r in results):
-                        self._logger.warning(
-                            "multipost_rejected",
-                            vacancy_id=vacancy_id,
-                            jobboard_id=jobboard_id,
-                            reason="Jobboard returned null results (likely invalid data for this channel)",
-                        )
-                        return ApiResponse(success=False, data=data, status_code=200)
-
-                return ApiResponse(success=True, data=data, status_code=200)
+                return ApiResponse(success=self._web_operation_succeeded(data), data=data, status_code=200)
 
             return ApiResponse(success=False, data=response.text, status_code=response.status_code)
 
@@ -526,13 +607,7 @@ class BrightStaffingClient:
                 data=str(data)[:1000],
             )
 
-            success = response.status_code == 200
-
-            if isinstance(data, dict):
-                if data.get("status") == "error":
-                    success = False
-                elif data.get("status") == "success":
-                    success = True
+            success = response.status_code == 200 and self._web_operation_succeeded(data)
 
             return ApiResponse(
                 success=success,
@@ -546,6 +621,17 @@ class BrightStaffingClient:
                 message=str(exc),
                 endpoint="/multiposting/deleteVacancy",
             )
+
+    async def verify_web_session(self) -> bool:
+        """Read-only confirmation that the web session is authenticated, not just a login cookie."""
+        if not self._client or not self._web_session_cookies:
+            return False
+        response = await self._client.get(
+            f"{self._web_base_url}/index.php/", cookies=self._web_session_cookies,
+        )
+        return response.status_code == 200 and bool(
+            re.search(r"\bconst\s+User\s*=\s*JSON\.parse\s*\(", response.text)
+        )
 
     async def web_login(self, username: str, password: str) -> bool:
         """Log in to the BrightStaffing web app to get session cookies.

@@ -203,7 +203,7 @@ class VdabCompetence:
     @classmethod
     def from_api(cls, data: dict) -> "VdabCompetence":
         # API returns "code" as the ID and "desc" as the description
-        code = str(data.get("code", data.get("id", "")))
+        code = str(data.get("vdab_competence_code", data.get("code", data.get("id", ""))))
         return cls(
             id=code,
             name=data.get("desc", data.get("name", "")),
