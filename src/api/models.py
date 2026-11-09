@@ -612,8 +612,8 @@ class CompleteVacancy:
         if studies and isinstance(studies, list):
             studies_array = []
             for study in studies:
-                # Prefer level2_id (more specific), fallback to level1_id
-                study_id = study.get("level2_id") or study.get("level1_id")
+                # Fiche uses study_id; office listing uses level2_id / level1_id.
+                study_id = study.get("study_id") or study.get("level2_id") or study.get("level1_id")
                 if study_id:
                     try:
                         studies_array.append({"study_id": int(study_id)})

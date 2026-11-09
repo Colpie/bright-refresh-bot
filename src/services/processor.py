@@ -583,6 +583,17 @@ class JobProcessor:
             # Vacancy already has full data from extraData=true listing.
             # get_complete_vacancy fetches custom fields + VDAB competences.
             complete = await self.vacancy_service.get_complete_vacancy(vacancy)
+            # Reject known incomplete input before creating a copy or unposting the source.
+            if 3 in self.config.multipost_channels:
+                raw = complete.vacancy.raw_data
+                missing = []
+                if str(raw.get("vdab_jobcategory_id") or "").strip() in ("", "0"):
+                    missing.append("VDAB-sjabloon")
+                if not raw.get("studies"):
+                    missing.append("studievereiste")
+                if missing:
+                    raise ValueError("VDAB content validation: ontbrekend " + ", ".join(missing)
+                                     + "; geen kopie aangemaakt, oorspronkelijke vacature behouden")
 
         self._job_logger.log_vacancy_step(vacancy.id, "fetch", "success")
         return complete
@@ -793,7 +804,7 @@ class JobProcessor:
                     )
                 else:
                     message = str(response.data)
-                    validation = jobboard_id == 3 and isinstance(response.data, dict) and response.data.get("status") == "success" and any(word in message.lower() for word in ["verplicht", "is required", "ongeldig", "niet geldig"])
+                    validation = jobboard_id == 3 and BrightStaffingClient.is_vdab_content_rejection(response.data)
                     failures.append(("VALIDATION " if validation else "") + f"{channel_name}: {message[:400]}")
                     self._logger.warning(
                         "multipost_rejected",

@@ -185,6 +185,14 @@ class VacancyService:
         # Failure must stop before creating or closing any vacancy.
         detail = await self.client.get_vacancy_detail(vacancy_id)
         vacancy.raw_data["info_internal"] = detail["detail"]["info_internal"] or ""
+        # The verified fiche is authoritative for publication fields and selected studies.
+        for key in ("vdab_jobcategory_id", "vdab_jobcategory_name", "is_equal_by_experience"):
+            if key in detail["detail"]:
+                vacancy.raw_data[key] = detail["detail"][key]
+        if "studies" in detail:
+            if not isinstance(detail["studies"], list):
+                raise RuntimeError("Bright detail does not confirm the selected studies")
+            vacancy.raw_data["studies"] = detail["studies"]
         # The public competence endpoint can return [] while the actual fiche has codes.
         # Preserve the verified fiche, and never interpret missing data as an empty selection.
         raw_competences = detail.get("vdab_competences")

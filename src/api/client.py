@@ -489,6 +489,21 @@ class BrightStaffingClient:
 
         return not rejected(data.get("results", []))
 
+    @staticmethod
+    def is_vdab_content_rejection(data: Any) -> bool:
+        """Recognise explicit VDAB input rejections without hiding transport errors."""
+        if not isinstance(data, dict) or data.get("status") != "success":
+            return False
+        results = data.get("results")
+        if not isinstance(results, list):
+            return False
+        rejected = [row for row in results if isinstance(row, dict)
+                    and row.get("status") in ("error", "failed", "warning")]
+        markers = ("verplicht", "is required", "ongeldig", "niet geldig",
+                   "niet ingevuld", "kwaliteit-blokkerend")
+        return bool(rejected) and all(any(marker in str(row.get("result", "")).lower()
+                                         for marker in markers) for row in rejected)
+
     async def multipost_vacancy(
         self,
         vacancy_id: str,
