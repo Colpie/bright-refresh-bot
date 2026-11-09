@@ -4,9 +4,8 @@ dockerfilePath = "Dockerfile"
 root = "."
 
 [deploy]
-# Saturday 07:37 UTC = 08:37 Brussels (winter CET)
-# In summer (CEST, after last Sunday of March): this becomes 09:37 Brussels
-# To keep ~08:30 in summer instead, change to "37 6 * * 6"
+# Saturday 08:37 UTC = 09:37 Brussels (winter CET)
+# In summer (CEST): 10:37 Brussels. Railway evaluates cron in UTC.
 #
 # Offset 7 minutes past the half-hour on purpose: Railway's native cron
 # scheduler is known to occasionally skip triggers on "round" times
@@ -17,6 +16,6 @@ root = "."
 # dead-man's-switch: if this cron silently fails to trigger some week,
 # you get notified because no ping arrives, instead of only finding out
 # weeks later.
-startCommand = "python -m src.main recover-run --manifest config/recovery-2026-11-07.json"
+startCommand = "python -m src.main run"
 cronSchedule = "37 8 * * 6"
 restartPolicyType = "NEVER"
